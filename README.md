@@ -48,6 +48,8 @@ The launcher builds the CLI on first use if its release binary is missing. After
 
 ## Use the menu app
 
+<img src="docs/images/menu-bar.png" width="366" alt="Wi-Fi Pulse menu bar panel with live latency, signal, link rate, and traffic graphs">
+
 1. Click **Start Recording**, then play or use your network normally.
 2. When a stutter occurs, press the microphone key or click **Mark Lag**. Account for your reaction time when inspecting the result.
 3. Click **Stop Recording**, then **Reports**.
@@ -119,7 +121,7 @@ Each recording contains:
 
 The native report reads `metadata.json` and `events.jsonl` directly; it does not embed a browser. HTML additionally supports Option-scroll zoom. A truncated final JSONL line is ignored with a warning; malformed complete lines are rejected.
 
-All data remains on this Mac. The app does not collect SSIDs, BSSIDs, MAC addresses, or packet contents, and does not upload recordings. Sessions do contain local router addresses, timestamps, network metrics, and marker text. Review them before sharing. Sample screenshots use synthetic data.
+All data remains on this Mac. The app does not collect SSIDs, BSSIDs, MAC addresses, or packet contents, and does not upload recordings. Sessions do contain local router addresses, timestamps, network metrics, and marker text. Review them before sharing. The report-library screenshot uses synthetic data; the menu-bar screenshot shows a live recording.
 
 ## Development
 
