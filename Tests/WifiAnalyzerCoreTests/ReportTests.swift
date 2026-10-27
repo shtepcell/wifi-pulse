@@ -20,6 +20,7 @@ final class ReportTests: XCTestCase {
         _ = try Report.demo(output: folder.path)
         let metadata = try JSONSerialization.jsonObject(with: Data(contentsOf: folder.appendingPathComponent("metadata.json"))) as! [String: Any]
         XCTAssertEqual(metadata["synthetic"] as? Bool, true)
+        XCTAssertEqual(metadata["appVersion"] as? String, "0.2.0")
         let events = try SessionIO.readEvents(Data(contentsOf: folder.appendingPathComponent("events.jsonl")))
         XCTAssertTrue(events.contains { $0["kind"] as? String == "timeout" })
         XCTAssertTrue(events.contains { ($0["latencyMS"] as? Double ?? 0) > 100 })

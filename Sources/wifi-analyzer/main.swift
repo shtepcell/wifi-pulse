@@ -3,7 +3,7 @@ import Darwin
 import WifiAnalyzerCore
 
 let help = """
-Wi-Fi Pulse 0.1.0 — local macOS Wi-Fi recording and offline reports
+Wi-Fi Pulse \(BuildInfo.version) — local macOS Wi-Fi recording and offline reports
 
 Usage:
   wifi-analyzer record [options]

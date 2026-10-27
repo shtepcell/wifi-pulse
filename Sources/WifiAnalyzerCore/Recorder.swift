@@ -37,7 +37,7 @@ public final class Recorder {
         try Subnet.requireOnLink(gateway, interface: interface)
         let directory = try SessionIO.newDirectory(options.output)
         writer = try SessionWriter(directory: directory, metadata: [
-            "schemaVersion": 1, "appVersion": "0.1.0", "synthetic": false,
+            "schemaVersion": 1, "appVersion": BuildInfo.version, "synthetic": false,
             "startedUTC": ISO8601DateFormatter().string(from: Date()),
             "osVersion": ProcessInfo.processInfo.operatingSystemVersionString,
             "gateway": gateway, "interface": interface,

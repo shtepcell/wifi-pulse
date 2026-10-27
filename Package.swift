@@ -8,7 +8,7 @@ let package = Package(
         .executable(name: "wifi-analyzer-menu", targets: ["WifiAnalyzerMenu"])
     ],
     targets: [
-        .target(name: "WifiAnalyzerCore", resources: [.copy("Resources/report.html")]),
+        .target(name: "WifiAnalyzerCore", resources: [.copy("Resources/report.html"), .copy("Resources/VERSION")]),
         .executableTarget(name: "wifi-analyzer", dependencies: ["WifiAnalyzerCore"]),
         .executableTarget(name: "WifiAnalyzerMenu", dependencies: ["WifiAnalyzerCore"], linkerSettings: [.linkedFramework("Carbon")]),
         .testTarget(name: "WifiAnalyzerCoreTests", dependencies: ["WifiAnalyzerCore"]),

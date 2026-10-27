@@ -29,11 +29,13 @@ with tempfile.TemporaryDirectory(prefix='wifi-analyzer-smoke-') as tmp:
     events = [json.loads(line) for line in (session / 'events.jsonl').read_text().splitlines()]
     sends = sorted((e for e in events if e['kind'] == 'send'), key=lambda e: e['t'])
     replies = [e for e in events if e['kind'] == 'reply']
-    assert len(sends) >= 25, len(sends)
+    metadata = json.loads((session / 'metadata.json').read_text())
+    requested = metadata['requestedIntervalMS'] / 1000
+    assert len(sends) >= max(5, int(1.5 / requested)), len(sends)
     assert sends[0]['t'] < 0.5, f"Ping output was buffered: first send t={sends[0]['t']}"
     gaps = [b['t'] - a['t'] for a, b in zip(sends, sends[1:])]
     median = statistics.median(gaps)
-    assert 0.015 < median < 0.15, f'Invalid collection cadence: {median}'
+    assert requested * 0.5 < median < requested * 2.5, f'Invalid collection cadence: {median}'
     markers = [e for e in events if e['kind'] == 'marker']
     assert len(markers) == 1 and markers[0]['message'] == 'Integration lag marker', markers
     assert 0.7 < markers[0]['t'] < 1.5, markers

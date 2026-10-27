@@ -1,146 +1,153 @@
 # Wi-Fi Pulse
 
-## Приложение в строке меню
+A native macOS menu bar app for investigating Wi-Fi stutters while streaming games, making calls, or using other latency-sensitive apps. Record latency to your local router alongside Wi-Fi signal, link rate, traffic, and AWDL state, then compare them around a lag marker.
 
-Готовая локальная сборка: `dist/Wi-Fi Pulse.app`. Запуск:
+<img src="Assets/AppIcon.png" width="128" height="128" alt="Wi-Fi Pulse icon">
 
-```sh
-open "/Users/shtepcell/work/wifi-analyzer/dist/Wi-Fi Pulse.app"
-```
+## Features
 
-Интерфейс приложения и HTML-отчётов — на английском. Панель использует системные цвета macOS, включая выбранный акцентный цвет.
+- **Lightweight recording:** router probes every 100 ms by default; Wi-Fi metrics once per second. No internet probes, speed tests, or Wi-Fi scans.
+- **Live history:** five-minute graphs in a floating menu bar panel, including over fullscreen apps. Graph scrolling pauses when the panel is hidden and respects Reduce Motion.
+- **Lag markers:** press the microphone key without Fn while recording, or click **Mark Lag**. The microphone key is released after recording stops; standard F5 is unchanged. Availability depends on the keyboard and macOS settings.
+- **Native report library:** browse recordings in a chosen folder, newest first. New sessions appear automatically while the window is open. Interrupted sessions are marked **Incomplete**.
+- **Interactive analysis:** select a time range, drag to zoom, jump to a lag marker, hover to compare measurements, and switch to logarithmic latency. Median, p95, maximum, unanswered, and late-reply statistics follow the selected range.
+- **Portable reports:** every session also includes a self-contained HTML report that works offline in a browser.
+- **CLI:** use the same recorder from a terminal, including automatic stop and report regeneration.
 
-Нажми значок графика сигнала в строке меню (он отличается от системного значка Wi-Fi), чтобы открыть или скрыть компактную панель SwiftUI. При запуске панель открывается автоматически. У приложения нет значка в Dock. Закрытие панели не останавливает запись. Панель открывается на текущем Space у указателя мыши и может отображаться поверх полноэкранного приложения. Она не активирует приложение целиком и не должна переключать рабочие столы.
+![Native report library showing synthetic sample data](docs/images/reports.png)
 
-- **Start Recording / Stop Recording** — управляют тем же сборщиком, что и CLI.
-- Панель показывает последний RTT до роутера, RSSI и шум, скорость соединения, канал, AWDL, входящий/исходящий трафик и число запросов без ответа. Обновление интерфейса — 2 раза/с, измерения ping запрашиваются каждые 100 мс (10 раз/с).
-- Минималистичные графики показывают последние 5 минут: RTT, сигнал и шум, скорость соединения, трафик и состояние AWDL. Сигнал и входящий трафик — сплошные линии; шум и исходящий трафик — пунктир. Оранжевые линии отмечают лаги, красные штрихи — задержанные или неответившие запросы. Наведение показывает минимум и максимум. Пики RTT не усредняются, пропуски разрывают линию. Во время записи временная шкала плавно прокручивается с частотой до 30 кадров/с независимо от частоты измерений; при скрытой панели анимация приостанавливается и учитывает системную настройку Reduce Motion. После остановки графики остаются на последнем участке записи; вся сессия доступна в HTML-отчёте.
-- **Клавиша с микрофоном (на месте F5), без Fn** — ставит отметку лага во время записи. После остановки приложение освобождает клавишу. Именно стандартная F5 (код 96) не переназначается. Кнопка «Mark Lag» делает то же самое. Если клавиша с микрофоном недоступна, приложение показывает предупреждение. Регистрация через Carbon не использует перехват всего ввода или Accessibility-разрешение. Физическая клавиша проверена на этом Mac.
-- **Reports** — открывает нативную библиотеку записей. Слева — сессии из выбранной папки, новые сверху; выбор строки открывает графики и статистику справа. Список автоматически обновляется раз в 3 секунды, пока окно открыто. Кнопка папки меняет общую папку записей и запоминает её для будущих запусков и записей; кнопка обновления также перечитывает выбранную сессию. Незавершённые записи помечены **Incomplete**. В меню **Lag Markers** можно перейти к отметке лага. HTML не требуется: приложение использует `metadata.json` и `events.jsonl`. Автономный HTML-отчёт по-прежнему сохраняется для передачи и просмотра в браузере.
-- **Quit Wi-Fi Pulse** во время записи сначала останавливает сбор и сохраняет отчёт.
-- В «Settings» можно задать локальный роутер и Wi-Fi-интерфейс для работы с VPN, а также выбрать папку записей. Пустые поля означают автоопределение.
+## Requirements
 
-По умолчанию локальная сборка сохраняет данные в `/Users/shtepcell/work/wifi-analyzer/sessions/`. Выбранная папка и путь к последнему отчёту запоминаются между запусками. Никакого автозапуска, привилегированного помощника или изменения сетевых настроек приложение не устанавливает.
+- **Runtime deployment target:** macOS 13 Ventura or later. Liquid Glass is used on macOS 26+; earlier versions use a material background.
+- **Build:** Xcode 26 or later with the macOS 26 SDK or newer, plus Python 3 for app packaging. The source uses system frameworks only, with no external Swift package dependencies.
+- **Network:** a connected Wi-Fi interface and an IPv4 router on its local subnet. No `sudo` is required.
 
-После изменения кода закрой приложение и пересобери пакет:
+Runtime recording and the physical microphone key have been tested on Apple Silicon with macOS 27.0.1. Compilation checks for older deployment targets do not replace runtime testing on those systems. See [compatibility notes](docs/COMPATIBILITY.md).
+
+## Build and run
+
+From the repository directory:
 
 ```sh
 ./build-app.sh
+open "dist/Wi-Fi Pulse.app"
 ```
 
-Иконка приложения хранится в `Assets/AppIcon.icns`; векторный исходник — `Scripts/generate-app-icon.swift`. Пересоздать все размеры: `swift Scripts/generate-app-icon.swift Assets`, затем `./build-app.sh`.
+This builds the menu app and CLI in release mode and packages the app in `dist/`. The app is signed locally with an ad-hoc signature; it is not a notarized distribution. Quit the app before replacing its bundle with a new build. Quitting while recording saves the session first.
 
-Для сборки `.app` нужны Swift/Xcode и Python 3 (для создания Info.plist); для запуска готового приложения они не нужны. Сборка подписывается локальной ad-hoc-подписью для этого Mac; это не нотариально заверенный дистрибутив для других компьютеров.
+The build scripts explicitly use SwiftPM's native build system to preserve the deployment target declared in `Package.swift` across toolchains. Build products are ignored by Git.
 
-## Командный интерфейс
-
-Локальный CLI-сборщик для поиска причин рывков в GeForce NOW на Mac. Во время игры пишет небольшие события в файлы, после остановки создаёт интерактивный HTML-отчёт. Electron, сервер, Python и Node для использования не нужны.
-
-## Запуск
+To rebuild the CLI without packaging the app:
 
 ```sh
-cd /Users/shtepcell/work/wifi-analyzer
-./wifi-analyzer record
-```
-
-Release-версия уже собрана на этом Mac. При отсутствии бинарника запускатель сам вызывает `swift build -c release`; нужны Xcode Command Line Tools или Xcode. После изменения исходников пересобери вручную:
-
-```sh
-swift build -c release
-```
-
-Сборка рассчитана на macOS 13+, фактическая запись проверена на текущем Mac с macOS 27. `sudo` не нужен.
-
-Перед игрой оставь AWDL Control в выбранном тобой режиме. Сборщик не управляет AWDL и не меняет настройки роутера, Wi-Fi, Bluetooth или геолокации.
-
-- **Enter в терминале** — отметить лаг. Можно ввести описание и нажать Enter.
-- **Ctrl+C** — остановить запись, сохранить данные и создать отчёт.
-- Отметка в этой версии требует переключения в терминал; глобальной горячей клавиши нет. Учитывай задержку собственной реакции при просмотре.
-- Путь к папке записи и готовому отчёту выводится в терминале. По умолчанию это новая папка в `sessions/` относительно текущего каталога.
-
-Открой `report.html` из папки записи двойным щелчком в Finder. Он работает напрямую как локальный файл без сервера и интернета. Переносить можно весь каталог сессии; HTML также самодостаточен и содержит все данные для просмотра.
-
-## Параметры
-
-```sh
-# Десятиминутная запись, завершится автоматически
-./wifi-analyzer record --duration 600
-
-# Явный адрес домашнего роутера (например, если VPN меняет маршрут)
-./wifi-analyzer record --gateway 192.168.2.1 --interface en0
-
-# Другой интервал; новая папка не должна уже существовать
-./wifi-analyzer record --interval-ms 200 --output sessions/evening-game
-
-# Пересоздать отчёт из исходных данных, в том числе после аварийного завершения
-./wifi-analyzer report sessions/evening-game
-
-# Искусственная демонстрация графиков, без сетевых запросов
-./wifi-analyzer demo
-
+swift build --build-system native -c release
 ./wifi-analyzer --help
 ```
 
-Если получение последнего показателя зависло, при остановке сборщик ждёт его не более двух секунд и помечает пропуск в отчёте.
+The launcher builds the CLI on first use if its release binary is missing. After source changes, rebuild it explicitly.
 
-При создании записи приложение отказывается перезаписывать существующую папку. Команда `report` обновляет только `report.html`. Для шлюза принимаются локальные IPv4-адреса в подсети выбранного Wi-Fi-интерфейса; DNS-имена и публичные интернет-цели не поддерживаются. Если IPv4-шлюз не найден, передай адрес локального роутера и Wi-Fi-интерфейс явно. Если интерфейс не относится к Wi-Fi, запись не запускается.
+## Use the menu app
 
-## Что измеряется
+1. Click **Start Recording**, then play or use your network normally.
+2. When a stutter occurs, press the microphone key or click **Mark Lag**. Account for your reaction time when inspecting the result.
+3. Click **Stop Recording**, then **Reports**.
+4. Choose a session in the sidebar. Use **Lag Markers** to inspect the ten seconds on either side of a marker, or select a range yourself.
 
-| Показатель | Частота | Примечание |
-|---|---|---|
-| RTT до локального роутера | заданный интервал 100 мс | Системный ICMP ping, обычный класс трафика BE |
-| Отправки, ответы, таймауты, поздние ответы | каждое событие | Храним отдельные запросы с уникальными ID |
-| RSSI и шум | 1 раз/с | Текущие данные CoreWLAN, без сканирования сетей |
-| Канал, диапазон, ширина канала, скорость соединения | 1 раз/с | Физическая скорость передачи, не скорость интернета |
-| AWDL UP/DOWN | 1 раз/с | Только чтение административного флага интерфейса |
-| Входящий и исходящий трафик Wi-Fi | 1 раз/с | Сумма всех приложений на интерфейсе; скорость из разности счётчиков |
-| Маркеры лагов | вручную | Enter в терминале |
-| Изменение IPv4-маршрута по умолчанию | раз в 5 с | Запись останавливается, чтобы не смешивать пути |
+Closing the panel does not stop recording. **More → Settings…** provides router and interface overrides, useful when a VPN changes the default route. Blank fields select them automatically.
 
-Реальная частота ping зависит от планировщика macOS и нагрузки. Отчёт показывает заданный и медианный наблюдаемый интервал. Нельзя гарантировать точность в 100 мс или обнаружение каждого краткого сбоя. RTT вычисляет сам `ping`; поле `t` — монотонное время получения события сборщиком. Оригинальные временные метки `ping --apple-time` сохраняются в `ping.log`.
+The menu app initially saves sessions in:
 
-Таймаут наблюдения — 1 секунда. Поздний ответ сохраняется и перестаёт считаться окончательной потерей. Запрос, которому на момент остановки ещё не дали полную секунду для ответа, остаётся **ожидающим**, а не превращается в потерю. После принудительного `kill -9` запусти `report`: полностью записанные события сохранятся, незаконченная последняя строка JSONL пропускается с предупреждением. Полная повреждённая строка вызывает ошибку.
+```text
+~/Library/Application Support/Wi-Fi Pulse/Sessions/
+```
 
-## Просмотр
+The folder button in **Reports** changes the shared location used for browsing and future recordings. The chosen folder persists between launches. Existing recordings are not moved automatically. The app does not install a background helper or enable launch at login.
 
-В отчёте все графики используют одну шкалу времени. Можно:
+## Command line
 
-- выбрать отметку лага и увидеть ±10 секунд;
-- выделить диапазон мышью, задать границы числами или нажать «Full Session»;
-- использовать **Alt + колесо** для масштаба; обычное колесо прокручивает страницу;
-- навести курсор и сравнить ближайшие показатели;
-- включить логарифмическую шкалу RTT;
-- посмотреть медиану, p95, максимум, число неответивших и поздних запросов для выбранного участка.
+```sh
+# Record until Ctrl+C. Enter adds a lag marker.
+./wifi-analyzer record
 
-При отрисовке длинной записи минимумы и максимумы в каждом пиксельном столбце сохраняются: узкий пик не исчезает из-за усреднения. Отсутствующие значения не заменяются нулями. Показатели могут быть недоступны из-за отключения Wi-Fi, ограничений macOS или разрешений; отчёт это показывает. Названия сетей, BSSID, MAC-адреса и содержимое пакетов сборщик не собирает; просить доступ к геолокации для них не требуется.
+# Stop automatically after ten minutes.
+./wifi-analyzer record --duration 600
 
-## Как читать результат
+# Override router and interface, for example when using a VPN.
+./wifi-analyzer record --gateway 192.168.1.1 --interface en0
 
-- Рост RTT/потерь до роутера в момент лага указывает на проблему уже на локальном участке или с обработкой ICMP самим роутером. Падение сигнала, изменение канала и рост трафика помогут сузить гипотезу.
-- Ровный RTT при лагах не исключает неполадки у провайдера, на маршруте к GeForce NOW, на стороне сервиса или при декодировании видео на Mac. Внешние адреса мы намеренно не проверяем.
-- UP у AWDL не доказывает активную передачу. DOWN при опросе раз в секунду не исключает краткого включения между замерами.
-- Рост исходящего трафика Mac не показывает загрузку с iPhone: этот сборщик не видит счётчики всего роутера.
-- Счётчики `getifaddrs` могут переполниться или сброситься. На таком переходе скорость отсутствует один замер, а не становится отрицательной.
-- Нагрузка сборщика небольшая, но не нулевая. Сравни игру с записью и без неё в похожих условиях. Сборщик не запускает speedtest, Wi-Fi-сканирование, tcpdump или системный поток логов.
+# Use fewer probes and choose a new session folder.
+./wifi-analyzer record --interval-ms 200 --output sessions/evening-game
 
-## Файлы сессии и формат
+# Rebuild an HTML report, including after an interrupted recording.
+./wifi-analyzer report sessions/evening-game
 
-- `metadata.json` — версия схемы 1, время старта UTC, параметры, версия ОС и выбранный локальный шлюз.
-- `events.jsonl` — события: `schemaVersion`, `kind`, монотонное `t` в секундах от старта, `wallUTC` и поля события.
-- `ping.log` — исходные строки системного ping, включая исходное время отправки/получения.
-- `report.html` — автономный интерактивный отчёт.
+# Generate synthetic sample data without network requests.
+./wifi-analyzer demo
+```
 
-`send`: `id`, `sequence`, `sourceTime`; `reply`: тот же `id`, `sent`, `latencyMS`, `late`; `timeout`: `id`, `sent`; `metrics`: словарь `values`; `marker`: `message`; `stopping`: граница наблюдения; `end`: итоговые счётчики и причина завершения. Есть также `start` и `diagnostic`. Числовой `id` не повторяется при переполнении 16-битного номера ICMP. `null` или отсутствие поля означает недоступность, не ноль.
+The CLI saves sessions under `sessions/` relative to the current working directory unless `--output` is set. Session folders must not already exist. `report` replaces only `report.html`. To browse CLI sessions in the native app, choose their parent folder in **Reports**.
 
-Все артефакты остаются на диске, автоматической отправки нет. HTML содержит те же данные, что исходная запись: учитывай это при передаче отчёта другим людям.
+While recording, **Enter** adds a marker, optional text before Enter labels it, and **Ctrl+C** saves the session. The microphone shortcut belongs to the menu app; the CLI uses terminal input.
 
-## Разработка и проверки
+Only local IPv4 router addresses on the chosen Wi-Fi subnet are accepted. DNS names, public internet addresses, and non-Wi-Fi interfaces are rejected. A default-route change ends the session to avoid mixing network paths.
+
+## Measurements and interpretation
+
+| Measurement | Sampling | Meaning |
+| --- | --- | --- |
+| Router RTT | Every 100 ms by default | System ICMP ping, best-effort traffic class |
+| Replies, timeouts, late replies | Each event | Probes have unique IDs across ICMP sequence wraparound |
+| RSSI, noise, link rate, channel | Once per second | CoreWLAN readings without scanning |
+| AWDL state | Once per second | Administrative UP/DOWN flag, not proof of transmission |
+| Download and upload | Once per second | Total traffic across all apps on the selected interface |
+| Lag markers | Manual | Time of the key press or button click |
+
+A probe is marked timed out after one second. A later reply is retained and no longer counts as unanswered. Probes still waiting at the recording cutoff remain **pending**. Missing measurements are gaps rather than zeros, and chart aggregation preserves per-pixel minima and maxima.
+
+High router latency near a stutter suggests a problem on the local path or with the router's handling of ICMP. Normal router latency does not rule out ISP, streaming-service, routing, or video-decoding problems. This app cannot see the router's total traffic, including traffic from a phone or other device. Link rate is the negotiated Wi-Fi transmit rate, not internet throughput. Brief AWDL changes between samples may be missed. Sampling cadence depends on system scheduling and load; correlation does not establish cause.
+
+The recorder does not change AWDL, Wi-Fi, Bluetooth, router, or Location Services settings. If you use another tool to control AWDL, leave it in your preferred state. Recording adds some load: compare the experience with and without recording under similar conditions.
+
+## Session files and privacy
+
+Each recording contains:
+
+- `metadata.json`: schema version, app version, start time, OS, selected router/interface, and sampling configuration.
+- `events.jsonl`: timestamped sends, replies, timeouts, measurements, markers, diagnostics, and recording boundaries.
+- `ping.log`: original system ping output and its timestamps.
+- `report.html`: a self-contained report containing the session data.
+
+The native report reads `metadata.json` and `events.jsonl` directly; it does not embed a browser. HTML additionally supports Option-scroll zoom. A truncated final JSONL line is ignored with a warning; malformed complete lines are rejected.
+
+All data remains on this Mac. The app does not collect SSIDs, BSSIDs, MAC addresses, or packet contents, and does not upload recordings. Sessions do contain local router addresses, timestamps, network metrics, and marker text. Review them before sharing. Sample screenshots use synthetic data.
+
+## Development
 
 ```sh
 swift test
 node --test Tests/report.test.cjs
+
+# Optional live integration test; sends probes to the local Wi-Fi router.
 python3 Tests/smoke.py .build/debug/wifi-analyzer
 ```
 
-Node и Python используются только в дополнительных тестах. Live-тест отправляет ping исключительно локальному роутеру и проверяет фактическую частоту, отсутствие буферизации, маркер, Ctrl+C, границу наблюдения, восстановление отчёта и защиту от перезаписи. Wi-Fi-условия и ограничения macOS могут повлиять на его результат.
+Stop menu-app recording before running the microphone hotkey test, which reserves the same physical key. To run the other tests while recording continues:
+
+```sh
+swift test --skip MicrophoneHotKeyTests
+```
+
+Node.js is needed only for HTML report tests. Python 3 is needed for packaging and the optional live test. Network and keyboard checks depend on the host environment.
+
+The app version has one source: `Sources/WifiAnalyzerCore/Resources/VERSION`. The build script, CLI, and generated recording metadata use it. Session schema versioning is independent.
+
+To regenerate the icon artwork and its macOS sizes:
+
+```sh
+swift Scripts/generate-app-icon.swift Assets
+./build-app.sh
+```
+
+## License
+
+[MIT](LICENSE) © 2026 shtepcell.

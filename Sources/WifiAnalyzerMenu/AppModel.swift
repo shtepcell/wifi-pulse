@@ -31,9 +31,8 @@ import WifiAnalyzerCore
     private var quitAfterSave = false
 
     init() {
-        let defaultRoot = Bundle.main.object(forInfoDictionaryKey: "WASessionsDirectory") as? String
-        let path = UserDefaults.standard.string(forKey: "sessionsRoot") ?? defaultRoot
-        sessionsRoot = path.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Wi-Fi Analyzer/Sessions", isDirectory: true)
+        let path = UserDefaults.standard.string(forKey: "sessionsRoot")
+        sessionsRoot = path.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Wi-Fi Pulse/Sessions", isDirectory: true)
         if let saved = UserDefaults.standard.string(forKey: "lastReport"), FileManager.default.fileExists(atPath: URL(fileURLWithPath: saved).deletingLastPathComponent().appendingPathComponent("events.jsonl").path) { lastReport = URL(fileURLWithPath: saved) }
     }
     var busy: Bool { phase != .idle }
@@ -151,6 +150,8 @@ import WifiAnalyzerCore
         lastReport = url; UserDefaults.standard.set(url.path, forKey: "lastReport")
     }
     func openReport() {
+        do { try FileManager.default.createDirectory(at: sessionsRoot, withIntermediateDirectories: true) }
+        catch { errorMessage = "Couldn’t open the recordings folder: \(error)"; return }
         if reportWindow == nil {
             reportWindow = SessionReportWindowController(folder: sessionsRoot) { [weak self] folder in self?.setSessionsRoot(folder) }
         }

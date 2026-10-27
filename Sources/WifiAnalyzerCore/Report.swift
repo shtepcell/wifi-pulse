@@ -20,7 +20,7 @@ public enum Report {
     public static func demo(output: String?) throws -> URL {
         let directory = try SessionIO.newDirectory(output, prefix: "demo")
         let writer = try SessionWriter(directory: directory, metadata: [
-            "schemaVersion": 1, "synthetic": true, "appVersion": "0.1.0", "gateway": "192.168.2.1", "interface": "en0",
+            "schemaVersion": 1, "synthetic": true, "appVersion": BuildInfo.version, "gateway": "192.168.2.1", "interface": "en0",
             "startedUTC": ISO8601DateFormatter().string(from: Date()), "requestedIntervalMS": 50, "timeoutSeconds": 1,
             "note": "Synthetic demonstration. These are not measurements of your network."
         ])
