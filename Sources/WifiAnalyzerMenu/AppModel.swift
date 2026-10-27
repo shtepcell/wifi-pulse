@@ -20,6 +20,9 @@ import WifiAnalyzerCore
     private var accumulator = LiveSnapshot()
     private var refreshTimer: Timer?
     private var hotKey: GlobalHotKey?
+    private lazy var microphoneHotKey = MicrophoneHotKey { [weak self] in self?.recordLagMarker("Lag · microphone key") }
+    @Published private(set) var microphoneShortcutAvailable = false
+    var markShortcutText: String { microphoneShortcutAvailable ? "Mic key · \(GlobalHotKey.display)" : GlobalHotKey.display }
     private var feedbackToken = UUID()
     private var quitAfterSave = false
 
@@ -77,10 +80,14 @@ import WifiAnalyzerCore
             recorder.onEvent = { [weak self] event in
                 guard let self else { return }
                 self.accumulator.consume(event)
-                if event["kind"] as? String == "stopping" { self.phase = .stopping }
+                if event["kind"] as? String == "stopping" { self.disableMicrophoneKey(); self.phase = .stopping }
             }
             try recorder.start(interactive: false) { [weak self] result in self?.completed(result) }
             phase = .recording
+            do {
+                try microphoneHotKey.setEnabled(true)
+                microphoneShortcutAvailable = true
+            } catch { hotKeyError = String(describing: error) }
             let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
@@ -97,10 +104,16 @@ import WifiAnalyzerCore
     }
     func stop() {
         guard phase == .recording else { return }
+        disableMicrophoneKey()
         phase = .stopping; recorder?.stop()
     }
-    func markLag() {
-        guard phase == .recording, let recorder, recorder.markLag("Lag · menu app") else { return }
+    private func disableMicrophoneKey() {
+        try? microphoneHotKey.setEnabled(false)
+        microphoneShortcutAvailable = false
+    }
+    func markLag() { recordLagMarker("Lag · menu app") }
+    private func recordLagMarker(_ label: String) {
+        guard phase == .recording, let recorder, recorder.markLag(label) else { return }
         snapshot = accumulator; elapsed = recorder.elapsed
         let token = UUID(); feedbackToken = token
         feedback = "Marker \(accumulator.markers) · \(timeText)"
@@ -109,6 +122,7 @@ import WifiAnalyzerCore
         }
     }
     private func completed(_ result: Result<URL, Error>) {
+        disableMicrophoneKey()
         refreshTimer?.invalidate(); refreshTimer = nil
         snapshot = accumulator; elapsed = recorder?.elapsed ?? elapsed
         let possibleReport = recorder?.sessionDirectory.appendingPathComponent("report.html")

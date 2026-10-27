@@ -17,7 +17,7 @@ import Combine
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
     let model = AppModel()
     private var statusItem: NSStatusItem?
-    private var controlWindow: NSWindow?
+    private var controlWindow: AnalyzerPanel?
     private var phaseObserver: AnyCancellable?
     private var sizeObserver: NSKeyValueObservation?
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -27,38 +27,40 @@ import Combine
         item.button?.action = #selector(togglePanel)
         item.button?.setAccessibilityLabel("Wi-Fi Analyzer")
         item.button?.toolTip = "Wi-Fi Analyzer"
-        let host = NSHostingController(rootView: MenuContent(model: model).fixedSize(horizontal: false, vertical: true))
+        let host = NSHostingController(rootView: MenuContent(model: model, onClose: { [weak self] in self?.controlWindow?.orderOut(nil) }).fixedSize(horizontal: false, vertical: true))
         host.sizingOptions = [.preferredContentSize]
-        let window = NSWindow(contentViewController: host)
+        let window = AnalyzerPanel()
+        window.contentViewController = host
         window.title = "Wi-Fi Analyzer"
-        window.styleMask = [.titled, .closable]
         window.isReleasedWhenClosed = false
         window.titlebarAppearsTransparent = true
-        window.setContentSize(NSSize(width: 380, height: max(350, host.view.fittingSize.height)))
+        window.titleVisibility = .hidden
+        for kind in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            window.standardWindowButton(kind)?.isHidden = true
+        }
+        window.backgroundColor = .clear
+        window.isOpaque = false
+        window.isMovableByWindowBackground = true
+        window.setFrame(NSRect(x: 0, y: 0, width: 360, height: max(250, host.view.fittingSize.height)), display: false)
         controlWindow = window
         sizeObserver = host.observe(\.preferredContentSize, options: [.new]) { [weak window] _, change in
             guard let window, let size = change.newValue, size.width > 0, size.height > 0 else { return }
             let top = NSPoint(x: window.frame.minX, y: window.frame.maxY)
-            window.setContentSize(size)
-            window.setFrameTopLeftPoint(top)
+            window.setFrame(NSRect(x: top.x, y: top.y - size.height, width: size.width, height: size.height), display: true)
         }
         phaseObserver = model.$phase.sink { [weak self] phase in
-            let image = NSImage(systemSymbolName: phase == .recording ? "record.circle" : "wifi", accessibilityDescription: "Wi-Fi Analyzer")
+            let image = NSImage(systemSymbolName: phase == .recording ? "record.circle" : "waveform.path.ecg", accessibilityDescription: "Wi-Fi Analyzer")
             image?.isTemplate = true
             self?.statusItem?.button?.image = image
         }
         showPanel()
     }
     @objc private func togglePanel() {
-        if controlWindow?.isVisible == true { controlWindow?.orderOut(nil) } else { showPanel() }
+        if controlWindow?.isVisibleOnPresentationScreen == true { controlWindow?.orderOut(nil) } else { showPanel() }
     }
     private func showPanel() {
         guard let window = controlWindow else { return }
-        if !window.isVisible, let screen = statusItem?.button?.window?.screen ?? NSScreen.main {
-            window.setFrameTopLeftPoint(NSPoint(x: screen.visibleFrame.maxX - window.frame.width - 12, y: screen.visibleFrame.maxY - 8))
-        }
-        NSApp.activate(ignoringOtherApps: true)
-        window.makeKeyAndOrderFront(nil)
+        window.present(near: statusItem?.button)
     }
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool { showPanel(); return true }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply { model.prepareToQuit() }
@@ -66,161 +68,206 @@ import Combine
 }
 private struct MenuContent: View {
     @ObservedObject var model: AppModel
+    @Environment(\.colorScheme) private var colorScheme
+    let onClose: () -> Void
     @State private var settingsExpanded = false
     private var hasSession: Bool { model.busy || model.snapshot.sent > 0 }
+    private var fresh: Bool { hasSession && model.metricsFresh }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 12) {
-                Image(systemName: "wifi")
-                    .font(.system(size: 22, weight: .medium))
-                    .foregroundStyle(Color.accentColor)
-                    .frame(width: 44, height: 44)
-                    .background(Color.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 12))
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Wi-Fi Analyzer").font(.system(.title3, weight: .semibold))
-                    HStack(spacing: 5) {
-                        Circle().fill(model.phase == .recording ? Color.red : Color.secondary.opacity(0.5)).frame(width: 5, height: 5)
-                        Text(model.statusText).font(.caption).foregroundStyle(.secondary)
-                    }
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            if hasSession {
+                latency.padding(.top, 26).padding(.bottom, 24)
+                HStack(alignment: .top, spacing: 0) {
+                    measurement("Signal", value: signal, unit: "dBm", detail: "Noise \(noise) dBm")
+                    Spacer(minLength: 12)
+                    Rectangle().fill(.primary.opacity(0.09)).frame(width: 1, height: 52).padding(.trailing, 22)
+                    measurement("Link Rate", value: link, unit: "Mbps", detail: "Channel \(channel)")
                 }
-                Spacer()
-                if model.phase == .starting || model.phase == .stopping { ProgressView().controlSize(.small) }
+                .padding(.bottom, 20)
+
+                HStack {
+                    Label("AWDL", systemImage: "antenna.radiowaves.left.and.right")
+                    Text(awdl).foregroundStyle(.primary)
+                    Spacer()
+                    Image(systemName: "arrow.down").font(.system(size: 10, weight: .medium))
+                    Text(rate(model.snapshot.rxBytesPerSecond))
+                    Image(systemName: "arrow.up").font(.system(size: 10, weight: .medium))
+                    Text(rate(model.snapshot.txBytesPerSecond))
+                    Text("Mbps")
+                }.font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
+            } else {
+                VStack(alignment: .leading, spacing: 9) {
+                    Text("Ready to record").font(.system(size: 30, weight: .light))
+                    Text("Capture latency, Wi-Fi signal, and network activity while you play.")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }.padding(.top, 28).padding(.bottom, 4)
             }
 
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .firstTextBaseline) {
-                    Text(model.phase == .idle && hasSession ? "Last Router Latency" : "Router Latency")
-                        .font(.subheadline).foregroundStyle(.secondary)
-                    Spacer()
-                    if model.busy { Text(model.timeText).font(.caption.monospacedDigit()).foregroundStyle(.secondary) }
-                }
-                Text(hasSession ? model.rttText : "—")
-                    .font(.system(size: 32, weight: .medium)).monospacedDigit()
-                    .contentTransition(.numericText())
-                HStack {
-                    Label(model.route, systemImage: "network").lineLimit(1)
-                    Spacer(minLength: 0)
-                }.font(.caption).foregroundStyle(.secondary)
-            }.padding(14).nativeCard()
-
-            VStack(spacing: 0) {
-                metricRow("Signal / Noise", value: signalText)
-                Divider().padding(.horizontal, 12)
-                metricRow("Link Rate", value: linkText)
-                Divider().padding(.horizontal, 12)
-                metricRow("Channel", value: channelText)
-                Divider().padding(.horizontal, 12)
-                metricRow("AWDL", value: awdlText)
-                Divider().padding(.horizontal, 12)
-                metricRow("Download / Upload", value: trafficText)
-            }.nativeCard()
-
             if hasSession {
-                HStack {
+                HStack(spacing: 5) {
                     Text("\(model.snapshot.sent) probes")
                     Text("·")
                     Text("\(model.snapshot.missing) unanswered")
                     Spacer()
                     if model.snapshot.markers > 0 { Label("\(model.snapshot.markers)", systemImage: "flag") }
-                }.font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                }.font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit().padding(.top, 9)
             }
-            if model.phase == .recording && !model.metricsFresh {
-                Text("Waiting for current Wi-Fi measurements…").font(.caption).foregroundStyle(.secondary)
-            }
-            if let error = model.errorMessage { notice(error, symbol: "exclamationmark.circle", color: .red) }
-            if let warning = model.hotKeyError { notice(warning, symbol: "keyboard", color: .orange) }
-            if model.phase == .recording, !model.snapshot.issues.isEmpty {
-                notice(model.snapshot.issues.joined(separator: "; "), symbol: "exclamationmark.triangle", color: .orange)
-            }
-            if !model.feedback.isEmpty { notice(model.feedback, symbol: "checkmark.circle", color: .secondary) }
-
-            VStack(spacing: 8) {
-                Button(action: { model.phase == .recording ? model.stop() : model.start() }) {
-                    Label(model.phase == .recording ? "Stop Recording" : "Start Recording", systemImage: model.phase == .recording ? "stop.fill" : "record.circle")
-                        .frame(maxWidth: .infinity)
-                }.buttonStyle(.borderedProminent).controlSize(.large)
-                    .disabled(model.phase == .starting || model.phase == .stopping)
-                Button(action: model.markLag) {
-                    HStack {
-                        Label("Mark Lag", systemImage: "flag")
-                        Spacer()
-                        Text(GlobalHotKey.display).font(.caption).foregroundStyle(.secondary)
-                    }.frame(maxWidth: .infinity)
-                }.buttonStyle(.bordered).controlSize(.large).disabled(model.phase != .recording)
-            }
+            messages
+            controls.padding(.top, 22)
             HStack {
-                Button(action: model.openReport) { Label("Open Report", systemImage: "doc.richtext") }
-                    .disabled(model.lastReport == nil)
+                Button(action: model.openReport) {
+                    Label("Open Report", systemImage: "doc.text")
+                }.disabled(model.lastReport == nil)
                 Spacer()
-                Button(action: model.showSessions) { Image(systemName: "folder") }
-                    .help("Show Recordings in Finder")
-                    .accessibilityLabel("Show Recordings in Finder")
-            }.buttonStyle(.borderless).font(.subheadline)
-            Divider()
-            DisclosureGroup("Settings", isExpanded: $settingsExpanded) {
-                VStack(alignment: .leading, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("Router").font(.caption).foregroundStyle(.secondary)
-                        TextField("Automatic", text: $model.gatewayOverride).textFieldStyle(.roundedBorder)
-                    }
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("Wi-Fi Interface").font(.caption).foregroundStyle(.secondary)
-                        TextField("Automatic", text: $model.interfaceOverride).textFieldStyle(.roundedBorder)
-                    }
-                    Text("Leave blank to detect automatically. If you use a VPN, enter your local router and Wi-Fi interface.")
-                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    Button("Recordings Folder…", action: model.chooseSessionsFolder)
-                    Text(model.sessionsRoot.path).font(.caption2).foregroundStyle(.secondary)
-                        .lineLimit(2).truncationMode(.middle).textSelection(.enabled)
-                }.padding(.top, 10).disabled(model.busy)
-            }.font(.subheadline)
-            HStack {
-                Text("Local measurements only").font(.caption2).foregroundStyle(.tertiary)
-                Spacer()
-                Button("Quit Wi-Fi Analyzer") { NSApp.terminate(nil) }
-                    .buttonStyle(.plain).font(.caption).foregroundStyle(.secondary)
-            }
-        }.padding(18).frame(width: 380)
-            .background(Color(nsColor: .windowBackgroundColor))
+                if model.phase == .recording {
+                    Text(model.markShortcutText).font(.system(size: 11)).foregroundStyle(.tertiary)
+                }
+                Menu {
+                    Button(settingsExpanded ? "Hide Settings" : "Settings…") { settingsExpanded.toggle() }
+                    Button("Show Recordings in Finder", action: model.showSessions)
+                    Divider()
+                    Button("Quit Wi-Fi Analyzer") { NSApp.terminate(nil) }
+                } label: {
+                    Image(systemName: "ellipsis").font(.system(size: 15, weight: .medium)).frame(width: 24, height: 22)
+                }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("More")
+            }.font(.system(size: 12, weight: .medium)).buttonStyle(.plain)
+                .foregroundStyle(.secondary).padding(.top, 17)
+            if settingsExpanded { settings.padding(.top, 20) }
+        }
+        .padding(22)
+        .frame(width: 360)
+        .modifier(PanelMaterial())
+        .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+        .ignoresSafeArea()
     }
-    private func metricRow(_ title: String, value: String) -> some View {
-        HStack {
-            Text(title).foregroundStyle(.secondary)
-            Spacer(minLength: 12)
-            Text(value).monospacedDigit()
-        }.font(.subheadline).padding(.horizontal, 12).padding(.vertical, 9)
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "waveform.path.ecg").font(.system(size: 15, weight: .semibold))
+            Text("Wi-Fi Analyzer").font(.system(size: 14, weight: .semibold))
+            Spacer()
+            if model.phase == .starting || model.phase == .stopping {
+                ProgressView().controlSize(.mini)
+            } else {
+                if model.phase == .recording { Circle().fill(.red).frame(width: 5, height: 5) }
+                Text(model.phase == .recording ? model.timeText : "Ready")
+                    .font(.system(size: 11, weight: .medium)).monospacedDigit().foregroundStyle(.secondary)
+            }
+            Button(action: onClose) {
+                Image(systemName: "xmark").font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary).frame(width: 22, height: 22)
+                    .background(.primary.opacity(0.06), in: Circle())
+            }.buttonStyle(.plain).help("Close Panel").accessibilityLabel("Close Panel")
+        }
+    }
+    private var latency: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(model.phase == .idle && hasSession ? "Last router latency" : "Router latency")
+                .font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 7) {
+                Text(latencyValue).font(.system(size: 62, weight: .light)).monospacedDigit()
+                    .contentTransition(.numericText())
+                if latencyValue != "—" { Text("ms").font(.system(size: 20, weight: .regular)).foregroundStyle(.secondary) }
+                Spacer(minLength: 0)
+            }.accessibilityElement(children: .combine)
+            Text(model.rttText == "No Reply" ? "Waiting for a router response…" : model.route)
+                .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+        }
+    }
+    private func measurement(_ title: String, value: String, unit: String, detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline, spacing: 4) {
+                Text(value).font(.system(size: 23, weight: .medium)).monospacedDigit()
+                Text(unit).font(.system(size: 10)).foregroundStyle(.secondary)
+            }
+            Text(detail).font(.system(size: 10)).foregroundStyle(.tertiary).monospacedDigit()
+        }.frame(minWidth: 110, alignment: .leading)
+    }
+    private var controls: some View {
+        HStack(spacing: 10) {
+            actionButton(model.phase == .recording ? "Stop Recording" : "Start Recording", symbol: model.phase == .recording ? "stop.fill" : "record.circle", primary: true, disabled: model.phase == .starting || model.phase == .stopping) {
+                model.phase == .recording ? model.stop() : model.start()
+            }
+            actionButton("Mark Lag", symbol: "flag", primary: false, disabled: model.phase != .recording, action: model.markLag)
+        }
+    }
+    @ViewBuilder private func actionButton(_ title: String, symbol: String, primary: Bool, disabled: Bool, action: @escaping () -> Void) -> some View {
+        if primary {
+            Button(action: action) {
+                Label(title, systemImage: symbol)
+                    .font(.system(size: 12, weight: .semibold))
+                    .frame(maxWidth: .infinity).padding(.vertical, 11)
+                    // Fixed colors avoid inactive-window/vibrancy dimming in the
+                    // nonactivating panel. Only real disabled state lowers opacity.
+                    .foregroundStyle(colorScheme == .dark ? Color.black : Color.white)
+                    .background(colorScheme == .dark ? Color.white : Color.black, in: Capsule())
+            }.buttonStyle(.plain).disabled(disabled).opacity(disabled ? 0.4 : 1)
+        } else {
+            let button = Button(action: action) {
+                Label(title, systemImage: symbol)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity).padding(.vertical, 3)
+            }.disabled(disabled).controlSize(.large)
+            if #available(macOS 26.0, *) {
+                button.buttonStyle(.glass).buttonBorderShape(.capsule).opacity(disabled ? 0.35 : 1)
+            } else {
+                button.buttonStyle(.bordered).opacity(disabled ? 0.35 : 1)
+            }
+        }
+    }
+    @ViewBuilder private var messages: some View {
+        if let error = model.errorMessage { notice(error, symbol: "exclamationmark.circle", color: .red) }
+        if let warning = model.hotKeyError { notice(warning, symbol: "keyboard", color: .orange) }
+        if model.phase == .recording && !model.snapshot.issues.isEmpty {
+            notice(model.snapshot.issues.joined(separator: "; "), symbol: "exclamationmark.triangle", color: .orange)
+        }
+        if model.phase == .recording && !model.metricsFresh {
+            notice("Waiting for Wi-Fi measurements…", symbol: "wifi", color: .secondary)
+        }
+        if !model.feedback.isEmpty { notice(model.feedback, symbol: "checkmark", color: .secondary) }
     }
     private func notice(_ message: String, symbol: String, color: Color) -> some View {
-        Label(message, systemImage: symbol).font(.caption).foregroundStyle(color)
-            .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+        Label(message, systemImage: symbol).font(.system(size: 11)).foregroundStyle(color)
+            .fixedSize(horizontal: false, vertical: true).textSelection(.enabled).padding(.top, 12)
     }
-    private var signalText: String {
-        guard hasSession, model.metricsFresh else { return "—" }
-        return "\(model.snapshot.rssiDBm.map(String.init) ?? "—") / \(model.snapshot.noiseDBm.map(String.init) ?? "—") dBm"
+    private var settings: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Divider()
+            Text("Connection Settings").font(.system(size: 12, weight: .semibold))
+            TextField("Router · Automatic", text: $model.gatewayOverride).textFieldStyle(.roundedBorder)
+            TextField("Wi-Fi Interface · Automatic", text: $model.interfaceOverride).textFieldStyle(.roundedBorder)
+            Text("Leave blank to detect automatically. If you use a VPN, enter your local router and Wi-Fi interface.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            Button("Recordings Folder…", action: model.chooseSessionsFolder)
+            Text(model.sessionsRoot.path).font(.caption2).foregroundStyle(.tertiary)
+                .lineLimit(2).truncationMode(.middle).textSelection(.enabled)
+        }.disabled(model.busy)
     }
-    private var linkText: String {
-        guard hasSession, model.metricsFresh else { return "—" }
-        return model.snapshot.linkMbps.map { String(format: "%.0f Mbps", $0) } ?? "—"
+    private var latencyValue: String {
+        guard hasSession else { return "—" }
+        return model.rttText.hasSuffix(" ms") ? String(model.rttText.dropLast(3)) : "—"
     }
-    private var channelText: String {
-        guard hasSession, model.metricsFresh else { return "—" }
-        return model.snapshot.channel.map(String.init) ?? "—"
-    }
-    private var awdlText: String {
-        guard hasSession, model.metricsFresh else { return "—" }
-        return model.snapshot.awdlUp.map { $0 ? "On" : "Off" } ?? "—"
-    }
-    private var trafficText: String {
-        guard hasSession, model.metricsFresh else { return "—" }
-        let rx = model.snapshot.rxBytesPerSecond.map { String(format: "%.1f", $0 * 8 / 1e6) } ?? "—"
-        let tx = model.snapshot.txBytesPerSecond.map { String(format: "%.1f", $0 * 8 / 1e6) } ?? "—"
-        return "\(rx) / \(tx) Mbps"
+    private var signal: String { fresh ? model.snapshot.rssiDBm.map(String.init) ?? "—" : "—" }
+    private var noise: String { fresh ? model.snapshot.noiseDBm.map(String.init) ?? "—" : "—" }
+    private var link: String { fresh ? model.snapshot.linkMbps.map { String(format: "%.0f", $0) } ?? "—" : "—" }
+    private var channel: String { fresh ? model.snapshot.channel.map(String.init) ?? "—" : "—" }
+    private var awdl: String { fresh ? model.snapshot.awdlUp.map { $0 ? "On" : "Off" } ?? "—" : "—" }
+    private func rate(_ value: Double?) -> String {
+        guard fresh, let value else { return "—" }
+        return String(format: "%.1f", value * 8 / 1e6)
     }
 }
-private extension View {
-    func nativeCard() -> some View {
-        self.background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.06), lineWidth: 1))
+private struct PanelMaterial: ViewModifier {
+    @ViewBuilder func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content.glassEffect(.regular, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        } else {
+            content.background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+        }
     }
 }

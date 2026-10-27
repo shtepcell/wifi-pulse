@@ -11,6 +11,7 @@ let package = Package(
         .target(name: "WifiAnalyzerCore", resources: [.copy("Resources/report.html")]),
         .executableTarget(name: "wifi-analyzer", dependencies: ["WifiAnalyzerCore"]),
         .executableTarget(name: "WifiAnalyzerMenu", dependencies: ["WifiAnalyzerCore"], linkerSettings: [.linkedFramework("Carbon")]),
-        .testTarget(name: "WifiAnalyzerCoreTests", dependencies: ["WifiAnalyzerCore"])
+        .testTarget(name: "WifiAnalyzerCoreTests", dependencies: ["WifiAnalyzerCore"]),
+        .testTarget(name: "WifiAnalyzerMenuTests", dependencies: ["WifiAnalyzerMenu"])
     ]
 )
