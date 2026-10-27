@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wi-Fi Analyzer · Session Report</title>
+<style>
+:root{color-scheme:light;--bg:#f5f5f7;--panel:#fff;--line:#dedee3;--text:#1d1d1f;--muted:#6e6e73;--cyan:#007aff;--orange:#c77700;--red:#d70015}@media(prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#161617;--panel:#232325;--line:#3a3a3c;--text:#f5f5f7;--muted:#a1a1a6;--cyan:#64d2ff;--orange:#ffb340;--red:#ff6961}}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:1240px;margin:auto;padding:36px 28px 60px}header{display:flex;justify-content:space-between;gap:20px;align-items:start}h1{font-size:30px;letter-spacing:-1px;margin:3px 0 8px;font-weight:650}h2{font-size:16px;margin:0}p{margin:8px 0}.eyebrow{color:var(--cyan);font-size:11px;letter-spacing:2px;text-transform:uppercase}.muted,small{color:var(--muted)}.badge{border:1px solid var(--line);border-radius:20px;padding:6px 12px;white-space:nowrap}.demo{color:var(--orange);background:var(--panel)}.notice{border-left:3px solid var(--orange);padding:12px 16px;margin:18px 0;background:var(--panel)}.cards{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin:24px 0 18px}.card,.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px}.card{padding:14px 18px}.card strong{display:block;font-size:25px;font-weight:600;font-variant-numeric:tabular-nums}.card span{color:var(--muted);font-size:12px}.toolbar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:16px}.sticky{position:sticky;top:0;z-index:5;background:var(--panel);backdrop-filter:blur(10px);margin-bottom:16px}button,input,select{font:inherit;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:7px 10px}button{cursor:pointer}button:hover{border-color:var(--cyan)}input[type=number]{width:90px}input[type=checkbox]{accent-color:var(--cyan)}select{max-width:360px}.chart{margin:12px 0;padding:16px 16px 5px;position:relative}.charthead{display:flex;align-items:baseline;justify-content:space-between;gap:16px}.charthead span{color:var(--muted);font-size:12px}.plot{position:relative}canvas{display:block;width:100%;height:170px;touch-action:none;cursor:crosshair}.legend{display:flex;gap:18px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin:8px 0}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px}.cursorinfo{min-height:25px;color:var(--cyan);font-variant-numeric:tabular-nums}details{margin-top:16px;padding:16px}summary{cursor:pointer;font-weight:600}pre{white-space:pre-wrap;overflow-wrap:anywhere;color:var(--muted);font-size:12px}table{border-collapse:collapse;width:100%;margin-top:12px;text-align:left}td,th{padding:8px;border-bottom:1px solid var(--line);vertical-align:top}td:first-child{white-space:nowrap;font-variant-numeric:tabular-nums;color:var(--muted)}footer{margin-top:24px;color:var(--muted);font-size:12px}.empty{padding:24px;color:var(--muted)}@media(max-width:760px){main{padding:20px 12px}.cards{grid-template-columns:repeat(2,1fr)}header{display:block}.badge{display:inline-block;margin-top:10px}.toolbar{gap:7px;padding:10px}.charthead{display:block}h1{font-size:25px}canvas{height:155px}}
+</style>
+</head>
+<body><main>
+<header><div><div class="eyebrow">Wi-Fi Analyzer / Session report</div><h1>Session Overview</h1><p class="muted" id="subtitle"></p></div><div class="badge" id="badge">Local Recording</div></header>
+<div id="warnings"></div>
+<div class="cards">
+<div class="card"><span>Median RTT</span><strong id="median">—</strong></div>
+<div class="card"><span>RTT · p95</span><strong id="p95">—</strong></div>
+<div class="card"><span>Maximum RTT</span><strong id="maximum">—</strong></div>
+<div class="card"><span>Unanswered Probes</span><strong id="missing">—</strong></div>
+<div class="card"><span>Replies After 1 Second</span><strong id="late">—</strong></div>
+</div>
+<div class="panel sticky"><div class="toolbar">
+<label>From <input id="from" type="number" min="0" step="0.1" aria-label="Range start in seconds"></label>
+<label>to <input id="to" type="number" min="0" step="0.1" aria-label="Range end in seconds"> s</label>
+<button id="apply">Apply</button><button id="reset">Full Session</button>
+<select id="markers" aria-label="Jump to a lag marker"><option value="">Lag Markers</option></select>
+<label><input id="log" type="checkbox"> Logarithmic RTT</label>
+</div></div>
+<p class="muted" id="rangeInfo"></p><p class="muted">Drag across a chart to zoom in. Use Option + scroll to change the scale. Hover to compare measurements.</p>
+<div class="cursorinfo" id="cursorInfo" aria-live="off"></div>
+<section class="panel chart"><div class="charthead"><h2>Router Latency</h2><span>RTT, ms · shown at probe send time</span></div><div class="legend"><span><i class="dot" style="background:var(--cyan)"></i>Replies</span><span><i class="dot" style="background:var(--red)"></i>No reply within 1 second</span><span><i class="dot" style="background:var(--orange)"></i>Lag Markers</span></div><div class="plot"><canvas id="latency" aria-label="Router latency chart"></canvas></div></section>
+<section class="panel chart"><div class="charthead"><h2>Wi-Fi Signal and Noise</h2><span>dBm · a less negative signal is stronger</span></div><div class="legend"><span><i class="dot" style="background:var(--cyan)"></i>Signal (RSSI)</span><span><i class="dot" style="background:var(--orange)"></i>Noise</span></div><canvas id="signal" aria-label="Signal and noise chart"></canvas></section>
+<section class="panel chart"><div class="charthead"><h2>Wi-Fi Link Rate</h2><span>Mbps · negotiated transmit rate, not internet speed</span></div><canvas id="link" aria-label="Wi-Fi link rate chart"></canvas></section>
+<section class="panel chart"><div class="charthead"><h2>Network Traffic</h2><span>Mbps · all apps on the selected interface</span></div><div class="legend"><span><i class="dot" style="background:var(--cyan)"></i>Download</span><span><i class="dot" style="background:var(--orange)"></i>Upload</span></div><canvas id="traffic" aria-label="Download and upload chart"></canvas></section>
+<section class="panel chart"><div class="charthead"><h2>AWDL Status</h2><span>1 — interface up · 0 — down · sampled once per second</span></div><canvas id="awdl" aria-label="AWDL status chart"></canvas></section>
+<details class="panel" open><summary>Events and Data Availability</summary><div id="events"></div></details>
+<details class="panel"><summary>Recording Details</summary><pre id="metadata"></pre></details>
+<footer>Recordings and reports stay on this Mac. No internet addresses are probed. Missing measurements are not replaced with zeros. Chart aggregation preserves minimum and maximum values.<br>A router may handle ICMP replies differently from game traffic. Normal router latency does not rule out an ISP, GeForce NOW route, or video decoding issue. Correlation alone does not establish the cause of lag.<br>AWDL is sampled once per second; a brief activation between samples may be missed. Event time uses a monotonic clock; RTT is calculated by system ping. Original ping timestamps are preserved in ping.log.</footer>
+</main>
+<script id="session-data" type="application/json">__SESSION_DATA__</script>
+<script>
+'use strict';
+function prepare(events){
+  const map=new Map();
+  for(const e of events){
+    if(e.kind==='send')map.set(e.id,{id:e.id,t:e.t,sequence:e.sequence,rtt:null,timedOut:false});
+    else if(e.kind==='reply'&&map.has(e.id)){const p=map.get(e.id);p.rtt=e.latencyMS;p.late=!!e.late;if(p.late)p.timedOut=true;}
+    else if(e.kind==='timeout'&&map.has(e.id))map.get(e.id).timedOut=true;
+  }
+  return {probes:[...map.values()].sort((a,b)=>a.t-b.t),metrics:events.filter(e=>e.kind==='metrics').sort((a,b)=>a.t-b.t),markers:events.filter(e=>e.kind==='marker').sort((a,b)=>a.t-b.t)};
+}
+function percentile(sorted,q){return sorted.length?sorted[Math.max(0,Math.ceil(q*sorted.length)-1)]:null;}
+function statistics(probes){
+  const rtts=probes.filter(p=>Number.isFinite(p.rtt)).map(p=>p.rtt).sort((a,b)=>a-b);
+  return {sent:probes.length,received:rtts.length,median:percentile(rtts,.5),p95:percentile(rtts,.95),max:rtts.length?rtts[rtts.length-1]:null,missing:probes.filter(p=>p.rtt===null&&p.timedOut).length,pending:probes.filter(p=>p.rtt===null&&!p.timedOut).length,late:probes.filter(p=>p.rtt!==null&&(p.late||p.timedOut)).length};
+}
+function envelope(points,start,end,width){
+  const columns=new Map();let segment=0;
+  for(const p of points){if(!Number.isFinite(p.y)){segment++;continue;}if(p.t<start||p.t>end)continue;const x=Math.max(0,Math.min(width-1,Math.floor((p.t-start)/(end-start)*width))),key=segment+':'+x;let c=columns.get(key);if(!c){c={x,min:p.y,max:p.y,last:p.y,t:p.t,segment};columns.set(key,c);}else{c.min=Math.min(c.min,p.y);c.max=Math.max(c.max,p.y);c.last=p.y;c.t=p.t;}}
+  return [...columns.values()].sort((a,b)=>a.x-b.x);
+}
+window.WifiReport={prepare,statistics,envelope};
+const payload=JSON.parse(document.getElementById('session-data').textContent),meta=payload.metadata,events=payload.events;
+const model=prepare(events),$=id=>document.getElementById(id),finite=Number.isFinite;
+const duration=events.reduce((maximum,e)=>Math.max(maximum,e.t),1);
+let view=[0,duration],cursor=null,drag=null;
+const fmt=(v,d=1)=>finite(v)?v.toLocaleString('en-US',{maximumFractionDigits:d}):'—';
+const time=t=>`${Math.floor(t/60)}:${(t%60).toFixed(1).padStart(4,'0')}`;
+$('subtitle').textContent=`${meta.interface||'—'} → ${meta.gateway||'—'} · ${meta.startedUTC?new Date(meta.startedUTC).toLocaleString('en-US'):''} · ${time(duration)}`;
+if(meta.synthetic){$('badge').textContent='Sample Data';$('badge').classList.add('demo');}
+$('metadata').textContent=JSON.stringify(meta,null,2);
+const warningList=[...(payload.warnings||[])];
+if(meta.synthetic)warningList.unshift('This report contains sample data, not measurements of your network.');
+if(!model.metrics.some(m=>finite(m.values?.rssiDBm)))warningList.push('Wi-Fi signal measurements are unavailable. An empty chart does not indicate a stable signal.');
+for(const text of warningList){const div=document.createElement('div');div.className='notice';div.textContent=text;$('warnings').append(div);}
+for(let i=0;i<model.markers.length;i++){const m=model.markers[i],option=document.createElement('option');option.value=String(i);option.textContent=`${time(m.t)} · ${m.message||'Lag'}`;$('markers').append(option);}
+if(!model.markers.length)$('markers').disabled=true;
+const table=document.createElement('table');
+let lastIssues='',lastChannel=null;
+const notable=[];
+for(const e of events){
+  if(e.kind==='marker'||e.kind==='diagnostic')notable.push([e.t,e.message||e.kind]);
+  if(e.kind==='metrics'){
+    const issues=(e.values?.issues||[]).join('; ');
+    if(issues!==lastIssues){notable.push([e.t,issues||'Measurements available again']);lastIssues=issues;}
+    if(e.values?.channel!=null&&e.values.channel!==lastChannel){notable.push([e.t,`Wi-Fi channel: ${e.values.channel}`]);lastChannel=e.values.channel;}
+  }
+  if(e.kind==='end')notable.push([e.t,`Finished: ${e.message||''}`]);
+}
+if(notable.length){for(const [t,text] of notable){const tr=document.createElement('tr'),a=document.createElement('td'),b=document.createElement('td'),button=document.createElement('button');button.textContent=time(t);button.onclick=()=>selectAround(t);a.append(button);b.textContent=text;tr.append(a,b);table.append(tr);}$('events').append(table);}else{$('events').textContent='No markers or diagnostic events.';}
+const metrics=(field,scale=1)=>model.metrics.map(e=>({t:e.t,y:typeof e.values?.[field]==='boolean'?Number(e.values[field]):finite(e.values?.[field])?e.values[field]*scale:null}));
+const charts=[
+{id:'latency',series:[{points:model.probes.map(p=>({t:p.t,y:p.rtt})),color:'#0a84ff'}]},
+{id:'signal',series:[{points:metrics('rssiDBm'),color:'#0a84ff'},{points:metrics('noiseDBm'),color:'#c77700'}],fixed:[-105,-20]},
+{id:'link',series:[{points:metrics('linkMbps'),color:'#0a84ff'}]},
+{id:'traffic',series:[{points:metrics('rxBytesPerSecond',8/1e6),color:'#0a84ff'},{points:metrics('txBytesPerSecond',8/1e6),color:'#c77700'}]},
+{id:'awdl',series:[{points:metrics('awdlUp'),color:'#0a84ff'}],fixed:[-.1,1.1],step:true}
+];
+function setView(start,end){if(!finite(start)||!finite(end)||end<=start)return;const span=Math.min(duration,Math.max(.1,end-start));start=Math.max(0,Math.min(duration-span,start));view=[start,start+span];$('from').value=view[0].toFixed(2);$('to').value=view[1].toFixed(2);draw();}
+function selectAround(t){setView(t-10,t+10);}
+let lastSummaryKey='';
+function summary(){
+ const key=view.join('/');if(key===lastSummaryKey)return;lastSummaryKey=key;
+ const probes=model.probes.filter(p=>p.t>=view[0]&&p.t<=view[1]),s=statistics(probes);
+ $('median').textContent=fmt(s.median)+' ms';$('p95').textContent=fmt(s.p95)+' ms';$('maximum').textContent=fmt(s.max)+' ms';
+ $('missing').textContent=`${s.missing} / ${s.sent}`;$('late').textContent=String(s.late);
+ const gaps=probes.slice(1).map((p,i)=>(p.t-probes[i].t)*1000).sort((a,b)=>a-b);
+ $('rangeInfo').textContent=`Range ${time(view[0])} – ${time(view[1])} · ${s.sent} probes · ${s.received} replies · ${s.pending} pending · interval: requested ${fmt(meta.requestedIntervalMS)} ms, observed median ${fmt(percentile(gaps,.5))} ms`;
+}
+function drawChart(chart){
+ const canvas=$(chart.id),rect=canvas.getBoundingClientRect(),dpr=window.devicePixelRatio||1;
+ canvas.width=Math.round(rect.width*dpr);canvas.height=Math.round(rect.height*dpr);
+ const ctx=canvas.getContext('2d');ctx.scale(dpr,dpr);
+ const left=58,top=16,width=Math.max(1,rect.width-left-18),height=rect.height-top-30;
+ chart.geometry={left,top,width,height};
+ const [start,end]=view,x=t=>left+(t-start)/(end-start)*width;
+ const log=chart.id==='latency'&&$('log').checked,transform=v=>log?Math.log10(1+v):v;
+ const cacheKey=[start,end,Math.floor(width)].join('/');
+ if(chart.cache?.key!==cacheKey){
+   let low=chart.fixed?.[0]??0,high=chart.fixed?.[1]??1,available=false;
+   const series=chart.series.map(s=>({...s,columns:envelope(s.points,start,end,Math.floor(width))}));
+   for(const s of series)for(const c of s.columns){available=true;if(!chart.fixed)high=Math.max(high,c.max*1.12);}
+   const losses=new Map();
+   if(chart.id==='latency')for(const p of model.probes)if(p.t>=start&&p.t<=end&&p.timedOut){const pixel=Math.floor((p.t-start)/(end-start)*width);losses.set(pixel,(losses.get(pixel)||false)||p.rtt===null);}
+   chart.cache={key:cacheKey,low,high,available,series,losses};
+ }
+ const {low,high,available}=chart.cache;
+ const y=v=>top+height-(transform(v)-transform(low))/(transform(high)-transform(low))*height;
+ ctx.font='11px -apple-system, sans-serif';ctx.lineWidth=1;
+ for(let i=0;i<=4;i++){
+   const pixel=top+height*i/4,value=log?Math.pow(10,transform(high)+(transform(low)-transform(high))*i/4)-1:high+(low-high)*i/4;
+   ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--line').trim();ctx.beginPath();ctx.moveTo(left,pixel);ctx.lineTo(left+width,pixel);ctx.stroke();ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--muted').trim();ctx.textAlign='right';ctx.fillText(fmt(value,chart.id==='awdl'?1:0),left-8,pixel+4);
+ }
+ ctx.textAlign='center';for(let i=0;i<=5;i++)ctx.fillText(time(start+(end-start)*i/5),left+width*i/5,rect.height-7);
+ ctx.save();ctx.beginPath();ctx.rect(left,top,width,height);ctx.clip();
+ for(const m of model.markers)if(m.t>=start&&m.t<=end){ctx.strokeStyle='#c7770088';ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(x(m.t),top);ctx.lineTo(x(m.t),top+height);ctx.stroke();ctx.setLineDash([]);}
+ for(const [pixel,missing] of chart.cache.losses){ctx.fillStyle=missing?'#ff718577':'#c7770044';ctx.fillRect(left+pixel,top,Math.max(1,width/(end-start)*.035),height);}
+ for(const series of chart.cache.series){
+   ctx.strokeStyle=series.color;ctx.fillStyle=series.color;ctx.lineWidth=1.4;
+   const cols=series.columns;
+   let previous=null;
+   for(const column of cols){const px=left+column.x+.5;
+     ctx.beginPath();ctx.moveTo(px,y(column.min));ctx.lineTo(px,y(column.max));ctx.stroke();
+     if(previous&&previous.segment===column.segment&&column.t-previous.t<(chart.id==='latency'?Math.max(.25,(meta.requestedIntervalMS||50)/1000*4):1.5)){
+       ctx.beginPath();ctx.moveTo(left+previous.x+.5,y(previous.last));if(chart.step)ctx.lineTo(px,y(previous.last));ctx.lineTo(px,y(column.last));ctx.stroke();
+     }else{ctx.beginPath();ctx.arc(px,y(column.last),1.7,0,Math.PI*2);ctx.fill();}
+     previous=column;
+   }
+ }
+ if(cursor!==null&&cursor>=start&&cursor<=end){ctx.strokeStyle='#e4edf799';ctx.beginPath();ctx.moveTo(x(cursor),top);ctx.lineTo(x(cursor),top+height);ctx.stroke();}
+ if(drag?.id===chart.id){ctx.fillStyle='#0a84ff22';ctx.fillRect(Math.min(drag.x1,drag.x2),top,Math.abs(drag.x2-drag.x1),height);}
+ ctx.restore();
+ if(!available){ctx.textAlign='center';ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--muted').trim();ctx.fillText('No measurements available in this range',left+width/2,top+height/2);}
+}
+let pendingFrame=false;
+function draw(){if(pendingFrame)return;pendingFrame=true;requestAnimationFrame(()=>{pendingFrame=false;summary();charts.forEach(drawChart);});}
+function nearest(rows,t){let lo=0,hi=rows.length;while(lo<hi){const mid=(lo+hi)>>1;if(rows[mid].t<t)lo=mid+1;else hi=mid;}const a=rows[lo],b=rows[lo-1];return !a?b:!b?a:Math.abs(a.t-t)<Math.abs(b.t-t)?a:b;}
+function pointerTime(chart,event){const r=$(chart.id).getBoundingClientRect(),g=chart.geometry;return view[0]+Math.max(0,Math.min(1,(event.clientX-r.left-g.left)/g.width))*(view[1]-view[0]);}
+for(const chart of charts){const canvas=$(chart.id);
+ canvas.addEventListener('pointermove',event=>{if(!chart.geometry)return;cursor=pointerTime(chart,event);if(drag?.id===chart.id)drag.x2=Math.max(chart.geometry.left,Math.min(chart.geometry.left+chart.geometry.width,event.offsetX));const p=nearest(model.probes,cursor),m=nearest(model.metrics,cursor);const nearP=p&&Math.abs(p.t-cursor)<Math.max(.2,(meta.requestedIntervalMS||50)/500),v=m&&Math.abs(m.t-cursor)<=1.5?m.values:{};$('cursorInfo').textContent=`${time(cursor)} · RTT ${nearP?fmt(p.rtt)+' ms':'—'} · RSSI ${fmt(v.rssiDBm)} dBm · noise ${fmt(v.noiseDBm)} dBm · channel ${v.channel??'—'} · AWDL ${v.awdlUp===true?'UP':v.awdlUp===false?'OFF':'—'}`;draw();});
+ canvas.addEventListener('pointerleave',()=>{if(!drag){cursor=null;$('cursorInfo').textContent='';draw();}});
+ canvas.addEventListener('pointerdown',event=>{if(event.button!==0||!chart.geometry)return;canvas.setPointerCapture(event.pointerId);const x=Math.max(chart.geometry.left,Math.min(chart.geometry.left+chart.geometry.width,event.offsetX));drag={id:chart.id,x1:x,x2:x,t:pointerTime(chart,event)};});
+ canvas.addEventListener('pointerup',event=>{if(!drag)return;const first=drag.t,last=pointerTime(chart,event),distance=Math.abs(drag.x2-drag.x1);drag=null;if(distance>8)setView(Math.min(first,last),Math.max(first,last));else draw();});
+ canvas.addEventListener('pointercancel',()=>{drag=null;draw();});
+ canvas.addEventListener('wheel',event=>{if(!chart.geometry||!event.altKey)return;event.preventDefault();const anchor=pointerTime(chart,event),span=view[1]-view[0],factor=event.deltaY>0?1.25:.8,portion=(anchor-view[0])/span;setView(anchor-span*factor*portion,anchor+span*factor*(1-portion));},{passive:false});
+}
+$('apply').onclick=()=>setView(Number($('from').value),Number($('to').value));$('reset').onclick=()=>{cursor=null;$('markers').value='';setView(0,duration);};$('markers').onchange=()=>{if($('markers').value!=='')selectAround(model.markers[Number($('markers').value)].t);};$('log').onchange=draw;
+window.addEventListener('resize',draw);setView(0,duration);
+</script>
+</body></html>

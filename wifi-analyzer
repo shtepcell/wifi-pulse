@@ -1,0 +1,9 @@
+#!/bin/sh
+set -eu
+project_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+binary="$project_dir/.build/release/wifi-analyzer"
+if [ ! -x "$binary" ]; then
+    printf '%s\n' 'Building Wi-Fi Analyzer (first launch only)…' >&2
+    (cd "$project_dir" && swift build -c release)
+fi
+exec "$binary" "$@"
