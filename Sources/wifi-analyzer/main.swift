@@ -3,7 +3,7 @@ import Darwin
 import WifiAnalyzerCore
 
 let help = """
-Wi-Fi Analyzer 0.1.0 — local macOS Wi-Fi recording and offline reports
+Wi-Fi Pulse 0.1.0 — local macOS Wi-Fi recording and offline reports
 
 Usage:
   wifi-analyzer record [options]
@@ -11,7 +11,7 @@ Usage:
   wifi-analyzer demo [--output NEW_FOLDER]
 
 Record options:
-  --interval-ms N   Router ping interval, 10–10000 ms (default 50)
+  --interval-ms N   Router ping interval, 10–10000 ms (default \(Int(Options.defaultInterval * 1000)))
   --duration N      Stop automatically after N seconds (optional)
   --gateway IP      Override router, local IPv4 only
   --interface NAME  Override Wi-Fi interface, e.g. en0

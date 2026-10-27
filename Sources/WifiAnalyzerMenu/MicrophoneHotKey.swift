@@ -37,5 +37,5 @@ final class MicrophoneHotKey {
 }
 private struct MicrophoneKeyError: Error, CustomStringConvertible {
     let status: OSStatus
-    var description: String { "The microphone key is unavailable (error \(status)). Use \(GlobalHotKey.display) or Mark Lag." }
+    var description: String { "The microphone key is unavailable (error \(status)). Use the Mark Lag button." }
 }

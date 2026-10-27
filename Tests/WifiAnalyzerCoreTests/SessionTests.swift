@@ -9,7 +9,7 @@ final class SessionTests: XCTestCase {
         XCTAssertThrowsError(try RouteInfo.parse("gateway: 999.1.1.1\ninterface: en0"))
     }
     func testRejectsUnsafeOrInvalidRecordingOptions() throws {
-        XCTAssertEqual(try Options.parse([]).interval, 0.05)
+        XCTAssertEqual(try Options.parse([]).interval, 0.1)
         XCTAssertEqual(try Options.parse(["record", "--interval-ms", "100"]).interval, 0.1)
         for args in [["--interval-ms", "0"], ["--interval-ms", "nan"], ["--duration", "-1"], ["--gateway", "example.com"], ["--gateway", "8.8.8.8"], ["--interface", "-bad"], ["--typo"], ["report"]] {
             XCTAssertThrowsError(try Options.parse(args), "Accepted: \(args)")

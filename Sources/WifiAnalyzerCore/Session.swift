@@ -42,7 +42,8 @@ public struct Options: Sendable {
     public var command = "record"
     public var gateway: String?
     public var interface: String?
-    public var interval = 0.05
+    public static let defaultInterval = 0.1
+    public var interval = Options.defaultInterval
     public var duration: Double?
     public var output: String?
     public var session: String?
@@ -77,7 +78,7 @@ public struct Options: Sendable {
                 result.output = value
             }
         }
-        if result.command == "demo", result.gateway != nil || result.interface != nil || result.duration != nil || result.interval != 0.05 {
+        if result.command == "demo", result.gateway != nil || result.interface != nil || result.duration != nil || result.interval != Options.defaultInterval {
             throw AnalyzerError("demo only accepts --output")
         }
         return result

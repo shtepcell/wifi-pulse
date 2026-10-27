@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import Combine
+import WifiAnalyzerCore
 
 @main struct WifiAnalyzerMenuApp {
     @MainActor static func main() {
@@ -14,7 +15,7 @@ import Combine
 }
 
 /// A small SwiftUI control window is opened from a persistent menu-bar item.
-@MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
+@MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let model = AppModel()
     private var statusItem: NSStatusItem?
     private var controlWindow: AnalyzerPanel?
@@ -25,13 +26,13 @@ import Combine
         statusItem = item
         item.button?.target = self
         item.button?.action = #selector(togglePanel)
-        item.button?.setAccessibilityLabel("Wi-Fi Analyzer")
-        item.button?.toolTip = "Wi-Fi Analyzer"
+        item.button?.setAccessibilityLabel("Wi-Fi Pulse")
+        item.button?.toolTip = "Wi-Fi Pulse"
         let host = NSHostingController(rootView: MenuContent(model: model, onClose: { [weak self] in self?.controlWindow?.orderOut(nil) }).fixedSize(horizontal: false, vertical: true))
         host.sizingOptions = [.preferredContentSize]
         let window = AnalyzerPanel()
         window.contentViewController = host
-        window.title = "Wi-Fi Analyzer"
+        window.title = "Wi-Fi Pulse"
         window.isReleasedWhenClosed = false
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
@@ -43,17 +44,23 @@ import Combine
         window.isMovableByWindowBackground = true
         window.setFrame(NSRect(x: 0, y: 0, width: 360, height: max(250, host.view.fittingSize.height)), display: false)
         controlWindow = window
+        model.onPresentReport = { [weak self] in self?.controlWindow?.orderOut(nil) }
+        window.delegate = self
         sizeObserver = host.observe(\.preferredContentSize, options: [.new]) { [weak window] _, change in
             guard let window, let size = change.newValue, size.width > 0, size.height > 0 else { return }
             let top = NSPoint(x: window.frame.minX, y: window.frame.maxY)
             window.setFrame(NSRect(x: top.x, y: top.y - size.height, width: size.width, height: size.height), display: true)
         }
         phaseObserver = model.$phase.sink { [weak self] phase in
-            let image = NSImage(systemSymbolName: phase == .recording ? "record.circle" : "waveform.path.ecg", accessibilityDescription: "Wi-Fi Analyzer")
+            let image = NSImage(systemSymbolName: phase == .recording ? "record.circle" : "waveform.path.ecg", accessibilityDescription: "Wi-Fi Pulse")
             image?.isTemplate = true
             self?.statusItem?.button?.image = image
         }
         showPanel()
+    }
+    func windowDidChangeOcclusionState(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        model.panelVisible = window.occlusionState.contains(.visible)
     }
     @objc private func togglePanel() {
         if controlWindow?.isVisibleOnPresentationScreen == true { controlWindow?.orderOut(nil) } else { showPanel() }
@@ -80,10 +87,10 @@ private struct MenuContent: View {
             if hasSession {
                 latency.padding(.top, 26).padding(.bottom, 24)
                 HStack(alignment: .top, spacing: 0) {
-                    measurement("Signal", value: signal, unit: "dBm", detail: "Noise \(noise) dBm")
+                    measurement("Signal", value: signal, unit: "dBm", detail: "Noise \(noise) dBm", metric: .signal)
                     Spacer(minLength: 12)
-                    Rectangle().fill(.primary.opacity(0.09)).frame(width: 1, height: 52).padding(.trailing, 22)
-                    measurement("Link Rate", value: link, unit: "Mbps", detail: "Channel \(channel)")
+                    Rectangle().fill(.primary.opacity(0.09)).frame(width: 1, height: 79).padding(.trailing, 22)
+                    measurement("Link Rate", value: link, unit: "Mbps", detail: "Channel \(channel)", metric: .link)
                 }
                 .padding(.bottom, 20)
 
@@ -97,6 +104,10 @@ private struct MenuContent: View {
                     Text(rate(model.snapshot.txBytesPerSecond))
                     Text("Mbps")
                 }.font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
+                HStack(spacing: 18) {
+                    chart([.awdl], scale: .binary, label: "AWDL", stepped: true).frame(width: 80, height: 16)
+                    chart([.download, .upload], scale: .zero(minimumMaximum: 1), label: "Download / upload (Mbps)").frame(height: 20)
+                }.padding(.top, 5)
             } else {
                 VStack(alignment: .leading, spacing: 9) {
                     Text("Ready to record").font(.system(size: 30, weight: .light))
@@ -119,17 +130,18 @@ private struct MenuContent: View {
             controls.padding(.top, 22)
             HStack {
                 Button(action: model.openReport) {
-                    Label("Open Report", systemImage: "doc.text")
-                }.disabled(model.lastReport == nil)
+                    Label("Reports", systemImage: "doc.text")
+                }
                 Spacer()
-                if model.phase == .recording {
-                    Text(model.markShortcutText).font(.system(size: 11)).foregroundStyle(.tertiary)
+                if model.phase == .recording && model.microphoneShortcutAvailable {
+                    Text("Mic key").font(.system(size: 11)).foregroundStyle(.tertiary)
                 }
                 Menu {
                     Button(settingsExpanded ? "Hide Settings" : "Settings…") { settingsExpanded.toggle() }
+                    Button("Browse Recordings", action: model.openRecording)
                     Button("Show Recordings in Finder", action: model.showSessions)
                     Divider()
-                    Button("Quit Wi-Fi Analyzer") { NSApp.terminate(nil) }
+                    Button("Quit Wi-Fi Pulse") { NSApp.terminate(nil) }
                 } label: {
                     Image(systemName: "ellipsis").font(.system(size: 15, weight: .medium)).frame(width: 24, height: 22)
                 }.menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize().help("More")
@@ -147,7 +159,7 @@ private struct MenuContent: View {
     private var header: some View {
         HStack(spacing: 8) {
             Image(systemName: "waveform.path.ecg").font(.system(size: 15, weight: .semibold))
-            Text("Wi-Fi Analyzer").font(.system(size: 14, weight: .semibold))
+            Text("Wi-Fi Pulse").font(.system(size: 14, weight: .semibold))
             Spacer()
             if model.phase == .starting || model.phase == .stopping {
                 ProgressView().controlSize(.mini)
@@ -165,27 +177,48 @@ private struct MenuContent: View {
     }
     private var latency: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(model.phase == .idle && hasSession ? "Last router latency" : "Router latency")
-                .font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
+            HStack {
+                Text(model.phase == .idle && hasSession ? "Last router latency" : "Router latency")
+                Spacer()
+                Text("Last 5 min").font(.system(size: 10))
+            }.font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
             HStack(alignment: .firstTextBaseline, spacing: 7) {
                 Text(latencyValue).font(.system(size: 62, weight: .light)).monospacedDigit()
                     .contentTransition(.numericText())
                 if latencyValue != "—" { Text("ms").font(.system(size: 20, weight: .regular)).foregroundStyle(.secondary) }
                 Spacer(minLength: 0)
             }.accessibilityElement(children: .combine)
+            chart([.latency], scale: .latency, label: "Router latency (ms)", gapLimit: 0.25).frame(height: 38).padding(.vertical, 5)
             Text(model.rttText == "No Reply" ? "Waiting for a router response…" : model.route)
                 .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
         }
     }
-    private func measurement(_ title: String, value: String, unit: String, detail: String) -> some View {
+    private func measurement(_ title: String, value: String, unit: String, detail: String, metric: RecentMetric) -> some View {
         VStack(alignment: .leading, spacing: 5) {
             Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
             HStack(alignment: .firstTextBaseline, spacing: 4) {
                 Text(value).font(.system(size: 23, weight: .medium)).monospacedDigit()
                 Text(unit).font(.system(size: 10)).foregroundStyle(.secondary)
             }
+            chart(metric == .signal ? [.signal, .noise] : [.link], scale: metric == .signal ? .signal : .zero(minimumMaximum: 100), label: metric == .signal ? "Signal / noise (dBm)" : "Link rate (Mbps)").frame(height: 24)
             Text(detail).font(.system(size: 10)).foregroundStyle(.tertiary).monospacedDigit()
         }.frame(minWidth: 110, alignment: .leading)
+    }
+    private func chart(_ metrics: [RecentMetric], scale: SparklineScale, label: String, stepped: Bool = false, gapLimit: Double = 1.75) -> some View {
+        RecentSparkline(series: metrics.enumerated().map { index, metric in
+            SparklineSeries(points: model.history.samples(for: metric), name: metricName(metric), color: index == 0 ? .primary : .secondary, dashed: index > 0)
+        }, end: model.history.endTime, window: model.history.window, clockOrigin: model.phase == .recording && model.panelVisible ? model.historyClockOrigin : nil, scale: scale, label: label, markers: model.history.markers, stepped: stepped, gapLimit: gapLimit)
+    }
+    private func metricName(_ metric: RecentMetric) -> String {
+        switch metric {
+        case .latency: return "Latency"
+        case .signal: return "Signal"
+        case .noise: return "Noise"
+        case .link: return "Link rate"
+        case .download: return "Download"
+        case .upload: return "Upload"
+        case .awdl: return "AWDL"
+        }
     }
     private var controls: some View {
         HStack(spacing: 10) {

@@ -7,8 +7,11 @@ import WifiAnalyzerCore
     enum Phase { case idle, starting, recording, stopping }
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var snapshot = LiveSnapshot()
+    @Published private(set) var history = RecentHistory()
+    @Published private(set) var historyClockOrigin: TimeInterval?
+    @Published var panelVisible = false
     @Published private(set) var elapsed = 0.0
-    @Published private(set) var route = "Local router · 50 ms"
+    @Published private(set) var route = "Local router · \(Int(Options.defaultInterval * 1000)) ms"
     @Published private(set) var lastReport: URL?
     @Published private(set) var errorMessage: String?
     @Published private(set) var hotKeyError: String?
@@ -16,13 +19,14 @@ import WifiAnalyzerCore
     @Published var gatewayOverride = UserDefaults.standard.string(forKey: "gatewayOverride") ?? ""
     @Published var interfaceOverride = UserDefaults.standard.string(forKey: "interfaceOverride") ?? ""
     @Published private(set) var sessionsRoot: URL
+    var onPresentReport: (() -> Void)?
+    private var reportWindow: SessionReportWindowController?
     private var recorder: Recorder?
     private var accumulator = LiveSnapshot()
+    private var historyAccumulator = RecentHistory()
     private var refreshTimer: Timer?
-    private var hotKey: GlobalHotKey?
     private lazy var microphoneHotKey = MicrophoneHotKey { [weak self] in self?.recordLagMarker("Lag · microphone key") }
     @Published private(set) var microphoneShortcutAvailable = false
-    var markShortcutText: String { microphoneShortcutAvailable ? "Mic key · \(GlobalHotKey.display)" : GlobalHotKey.display }
     private var feedbackToken = UUID()
     private var quitAfterSave = false
 
@@ -30,9 +34,7 @@ import WifiAnalyzerCore
         let defaultRoot = Bundle.main.object(forInfoDictionaryKey: "WASessionsDirectory") as? String
         let path = UserDefaults.standard.string(forKey: "sessionsRoot") ?? defaultRoot
         sessionsRoot = path.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Wi-Fi Analyzer/Sessions", isDirectory: true)
-        if let saved = UserDefaults.standard.string(forKey: "lastReport"), FileManager.default.fileExists(atPath: saved) { lastReport = URL(fileURLWithPath: saved) }
-        do { hotKey = try GlobalHotKey { [weak self] in self?.markLag() } }
-        catch { hotKeyError = String(describing: error) }
+        if let saved = UserDefaults.standard.string(forKey: "lastReport"), FileManager.default.fileExists(atPath: URL(fileURLWithPath: saved).deletingLastPathComponent().appendingPathComponent("events.jsonl").path) { lastReport = URL(fileURLWithPath: saved) }
     }
     var busy: Bool { phase != .idle }
     var timeText: String { String(format: "%02d:%02d", Int(elapsed) / 60, Int(elapsed) % 60) }
@@ -53,6 +55,8 @@ import WifiAnalyzerCore
         guard phase == .idle else { return }
         errorMessage = nil; feedback = ""; elapsed = 0
         accumulator = LiveSnapshot(); snapshot = accumulator
+        historyAccumulator = RecentHistory(); history = historyAccumulator
+        historyClockOrigin = nil
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
         let folder = sessionsRoot.appendingPathComponent("session-\(stamp)-\(UUID().uuidString.prefix(6))")
         var args = ["record", "--output", folder.path]
@@ -76,13 +80,15 @@ import WifiAnalyzerCore
         do {
             let recorder = try result.get()
             self.recorder = recorder
-            route = "\(recorder.interfaceName) → \(recorder.gatewayAddress) · 50 ms"
+            route = "\(recorder.interfaceName) → \(recorder.gatewayAddress) · \(Int(Options.defaultInterval * 1000)) ms"
             recorder.onEvent = { [weak self] event in
                 guard let self else { return }
                 self.accumulator.consume(event)
+                self.historyAccumulator.consume(event)
                 if event["kind"] as? String == "stopping" { self.disableMicrophoneKey(); self.phase = .stopping }
             }
             try recorder.start(interactive: false) { [weak self] result in self?.completed(result) }
+            historyClockOrigin = ProcessInfo.processInfo.systemUptime - recorder.elapsed
             phase = .recording
             do {
                 try microphoneHotKey.setEnabled(true)
@@ -90,9 +96,11 @@ import WifiAnalyzerCore
             } catch { hotKeyError = String(describing: error) }
             let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
                 DispatchQueue.main.async { [weak self] in
-                    guard let self else { return }
+                    guard let self, self.phase == .recording || self.phase == .stopping else { return }
                     self.snapshot = self.accumulator
                     self.elapsed = self.recorder?.elapsed ?? self.elapsed
+                    self.historyAccumulator.advance(to: self.elapsed)
+                    self.history = self.historyAccumulator
                 }
             }
             refreshTimer = timer
@@ -115,6 +123,7 @@ import WifiAnalyzerCore
     private func recordLagMarker(_ label: String) {
         guard phase == .recording, let recorder, recorder.markLag(label) else { return }
         snapshot = accumulator; elapsed = recorder.elapsed
+        historyAccumulator.advance(to: elapsed); history = historyAccumulator
         let token = UUID(); feedbackToken = token
         feedback = "Marker \(accumulator.markers) · \(timeText)"
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
@@ -125,6 +134,8 @@ import WifiAnalyzerCore
         disableMicrophoneKey()
         refreshTimer?.invalidate(); refreshTimer = nil
         snapshot = accumulator; elapsed = recorder?.elapsed ?? elapsed
+        // The end event freezes the graph clock before HTML generation begins.
+        history = historyAccumulator
         let possibleReport = recorder?.sessionDirectory.appendingPathComponent("report.html")
         recorder?.onEvent = nil; recorder = nil; phase = .idle
         switch result {
@@ -140,8 +151,17 @@ import WifiAnalyzerCore
         lastReport = url; UserDefaults.standard.set(url.path, forKey: "lastReport")
     }
     func openReport() {
-        guard let lastReport else { return }
-        if !NSWorkspace.shared.open(lastReport) { errorMessage = "The report couldn’t be opened. It may have been moved." }
+        if reportWindow == nil {
+            reportWindow = SessionReportWindowController(folder: sessionsRoot) { [weak self] folder in self?.setSessionsRoot(folder) }
+        }
+        onPresentReport?()
+        reportWindow?.open(preferred: lastReport?.deletingLastPathComponent())
+    }
+    func openRecording() { openReport() }
+    private func setSessionsRoot(_ url: URL) {
+        sessionsRoot = url.standardizedFileURL
+        UserDefaults.standard.set(sessionsRoot.path, forKey: "sessionsRoot")
+        reportWindow?.configureFolder(sessionsRoot)
     }
     func showSessions() {
         do {
@@ -159,7 +179,7 @@ import WifiAnalyzerCore
         panel.directoryURL = sessionsRoot
         NSApp.activate(ignoringOtherApps: true)
         if panel.runModal() == .OK, let url = panel.url {
-            sessionsRoot = url; UserDefaults.standard.set(url.path, forKey: "sessionsRoot")
+            setSessionsRoot(url)
         }
     }
     func prepareToQuit() -> NSApplication.TerminateReply {

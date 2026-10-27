@@ -10,20 +10,22 @@ import plistlib
 import shutil
 import sys
 root, binary_dir = map(Path, sys.argv[1:])
-app = root / 'dist' / 'Wi-Fi Analyzer.app'
+app = root / 'dist' / 'Wi-Fi Pulse.app'
 contents = app / 'Contents'
 (contents / 'MacOS').mkdir(parents=True, exist_ok=True)
 (contents / 'Resources').mkdir(exist_ok=True)
 shutil.copy2(binary_dir / 'wifi-analyzer-menu', contents / 'MacOS' / 'wifi-analyzer-menu')
+shutil.copy2(root / 'Assets' / 'AppIcon.icns', contents / 'Resources' / 'AppIcon.icns')
 shutil.copytree(binary_dir / 'WifiAnalyzer_WifiAnalyzerCore.bundle', contents / 'Resources' / 'WifiAnalyzer_WifiAnalyzerCore.bundle', dirs_exist_ok=True)
 info = {
     'CFBundleIdentifier': 'local.wifi-analyzer.menu',
-    'CFBundleName': 'Wi-Fi Analyzer',
-    'CFBundleDisplayName': 'Wi-Fi Analyzer',
+    'CFBundleName': 'Wi-Fi Pulse',
+    'CFBundleDisplayName': 'Wi-Fi Pulse',
     'CFBundleExecutable': 'wifi-analyzer-menu',
+    'CFBundleIconFile': 'AppIcon',
     'CFBundlePackageType': 'APPL',
     'CFBundleShortVersionString': '0.2.0',
-    'CFBundleVersion': '3',
+    'CFBundleVersion': '4',
     'CFBundleDevelopmentRegion': 'en',
     'CFBundleLocalizations': ['en'],
     'LSMinimumSystemVersion': '13.0',
@@ -36,6 +38,6 @@ with (contents / 'Info.plist').open('wb') as f:
     plistlib.dump(info, f)
 print(app)
 PY
-codesign --force --sign - "$project_dir/dist/Wi-Fi Analyzer.app"
-codesign --verify --strict "$project_dir/dist/Wi-Fi Analyzer.app"
-printf '\nBuilt: %s\n' "$project_dir/dist/Wi-Fi Analyzer.app"
+codesign --force --sign - "$project_dir/dist/Wi-Fi Pulse.app"
+codesign --verify --strict "$project_dir/dist/Wi-Fi Pulse.app"
+printf '\nBuilt: %s\n' "$project_dir/dist/Wi-Fi Pulse.app"
