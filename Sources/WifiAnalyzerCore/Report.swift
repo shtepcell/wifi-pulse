@@ -6,16 +6,20 @@ public enum Report {
         guard let metadata = try JSONSerialization.jsonObject(with: metadataData) as? [String: Any], metadata["schemaVersion"] as? Int == 1 else { throw AnalyzerError("Unsupported metadata schema") }
         let data = try Data(contentsOf: directory.appendingPathComponent("events.jsonl"))
         let events = try SessionIO.readEvents(data)
-        guard let templateURL = Bundle.module.url(forResource: "report", withExtension: "html") else { throw AnalyzerError("Report template missing from resource bundle") }
-        let template = try String(contentsOf: templateURL, encoding: .utf8)
         var warnings: [String] = []
         if data.last != 10, !data.isEmpty { warnings.append("The final event line has no newline; a truncated tail may have been ignored.") }
         if !events.contains(where: { $0["kind"] as? String == "end" }) { warnings.append("No end event: recording may have been interrupted. Unanswered probes without a timeout remain pending.") }
-        let payload = try SessionIO.safeJSON(["metadata": metadata, "events": events, "warnings": warnings])
-        let html = template.replacingOccurrences(of: "__SESSION_DATA__", with: payload)
+        let html = try render(metadata: metadata, events: events, warnings: warnings)
         let report = directory.appendingPathComponent("report.html")
         try html.write(to: report, atomically: true, encoding: .utf8)
         return report
+    }
+    static func render(metadata: [String: Any], events: [[String: Any]], warnings: [String] = []) throws -> String {
+        guard let templateURL = Bundle.module.url(forResource: "report", withExtension: "html") else { throw AnalyzerError("Report template missing from resource bundle") }
+        let template = try String(contentsOf: templateURL, encoding: .utf8)
+        let allWarnings = warnings + LiveEpisode.warnings(metadata: metadata)
+        let payload = try SessionIO.safeJSON(["metadata": metadata, "events": events, "warnings": allWarnings])
+        return template.replacingOccurrences(of: "__SESSION_DATA__", with: payload)
     }
     public static func demo(output: String?) throws -> URL {
         let directory = try SessionIO.newDirectory(output, prefix: "demo")

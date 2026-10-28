@@ -3,7 +3,7 @@ import Darwin
 
 public final class Recorder {
     private let options: Options
-    private let writer: SessionWriter
+    private let writer: RecordingJournal
     private let sampler: MetricsSampler
     private let initialRoute: RouteInfo?
     private let gateway: String
@@ -17,13 +17,14 @@ public final class Recorder {
     private var master: FileHandle?
     private var stopping = false, finished = false, metricsBusy = false
     private var worker = DispatchQueue(label: "wifi-analyzer.metrics", qos: .utility)
-    private var completion: ((Result<URL, Error>) -> Void)?
+    private var completion: ((Result<URL?, Error>) -> Void)?
     private var stoppedAt: Double?
     private var failure: Error?
     private var lastRouteCheck = -10.0, lastSync = 0.0
     private var lastIssues = ""
 
-    public init(options: Options) throws {
+    public init(options: Options, live: Bool = false) throws {
+        if live { tracker = PingTracker(retention: 900, maxProbes: 10_000) }
         self.options = options
         let route = try? RouteInfo.current()
         guard let gateway = options.gateway ?? route?.gateway, let interface = options.interface ?? route?.interface else {
@@ -35,8 +36,7 @@ public final class Recorder {
         self.gateway = gateway; self.interface = interface; initialRoute = route
         sampler = try MetricsSampler(interface: interface)
         try Subnet.requireOnLink(gateway, interface: interface)
-        let directory = try SessionIO.newDirectory(options.output)
-        writer = try SessionWriter(directory: directory, metadata: [
+        writer = try RecordingJournal(options: options, metadata: [
             "schemaVersion": 1, "appVersion": BuildInfo.version, "synthetic": false,
             "startedUTC": ISO8601DateFormatter().string(from: Date()),
             "osVersion": ProcessInfo.processInfo.operatingSystemVersionString,
@@ -46,7 +46,7 @@ public final class Recorder {
             "clock": "Event t uses monotonic system uptime at collection; ping.log retains ping source timestamps. RTT comes from ping, not pipe arrival time.",
             "counterNotes": "getifaddrs byte counters may wrap; a decrease resets the rate baseline.",
             "privacy": "Local-only router probes. No SSID/BSSID, packet contents, Wi-Fi scanning or remote uploads."
-        ])
+        ], live: live)
     }
 
     /// Hosted UI access. Assign and call control methods on the main queue.
@@ -54,12 +54,13 @@ public final class Recorder {
         get { writer.onEvent }
         set { writer.onEvent = newValue }
     }
-    public var sessionDirectory: URL { writer.directory }
+    public var sessionDirectory: URL? { writer.directory }
+    public var metadata: [String: Any] { writer.metadata }
     public var elapsed: Double { writer.elapsed }
     public var gatewayAddress: String { gateway }
     public var interfaceName: String { interface }
 
-    public func start(interactive: Bool = true, completion: @escaping (Result<URL, Error>) -> Void) throws {
+    public func start(interactive: Bool = true, completion: @escaping (Result<URL?, Error>) -> Void) throws {
         self.completion = completion
         var masterFD: Int32 = -1, slaveFD: Int32 = -1
         guard openpty(&masterFD, &slaveFD, nil, nil, nil) == 0 else { throw AnalyzerError("Cannot allocate ping terminal: \(String(cString: strerror(errno)))") }
@@ -75,7 +76,9 @@ public final class Recorder {
         try output.close()
         master = reader
         print("Recording Wi-Fi \(interface) → router \(gateway), requested interval \(Int(options.interval * 1000)) ms")
-        print("Session: \(writer.directory.path)\nEnter = lag marker · Ctrl+C = stop and generate report")
+        if let directory = writer.directory {
+            print("Session: \(directory.path)\nEnter = lag marker · Ctrl+C = stop and generate report")
+        }
         fflush(stdout)
         readPing(reader)
         for number in interactive ? [SIGINT, SIGTERM] : [] {
@@ -141,8 +144,8 @@ public final class Recorder {
         do {
             try writer.rawLine(line)
             if let seq = PingParser.sentSequence(line) {
-                tracker.sent(sequence: seq, at: time)
-                try writer.append("send", at: time, fields: ["id": tracker.probes.count - 1, "sequence": seq, "sourceTime": String(line.prefix(15))])
+                let id = tracker.sent(sequence: seq, at: time)
+                try writer.append("send", at: time, fields: ["id": id, "sequence": seq, "sourceTime": String(line.prefix(15))])
             } else if let reply = PingParser.reply(line) {
                 if let probe = tracker.reply(sequence: reply.sequence, latencyMS: reply.latencyMS, at: time) {
                     try writer.append("reply", at: time, fields: ["id": probe.id, "sequence": reply.sequence, "sent": probe.sent, "latencyMS": reply.latencyMS, "late": probe.timedOut])
@@ -255,13 +258,15 @@ public final class Recorder {
         timers.forEach { $0.cancel() }; signals.forEach { $0.cancel() }
         stdinSource?.cancel(); try? master?.close()
         do {
-            let missing = tracker.probes.filter { $0.latencyMS == nil && $0.timedOut }.count
-            let late = tracker.probes.filter { $0.latencyMS != nil && $0.timedOut }.count
-            let pending = tracker.probes.filter { $0.latencyMS == nil && !$0.timedOut }.count
-            try writer.append("end", fields: ["sent": tracker.probes.count, "missing": missing, "late": late, "pending": pending, "message": failure.map { String(describing: $0) } ?? "Stopped normally"])
+            let probes = tracker.probes
+            let missing = probes.filter { $0.latencyMS == nil && $0.timedOut }.count
+            let late = probes.filter { $0.latencyMS != nil && $0.timedOut }.count
+            let pending = probes.filter { $0.latencyMS == nil && !$0.timedOut }.count
+            try writer.append("end", fields: ["sent": tracker.totalSent, "missing": missing, "late": late, "pending": pending, "message": failure.map { String(describing: $0) } ?? "Stopped normally"])
             try writer.close()
-            let report = try Report.generate(directory: writer.directory)
-            print("Saved \(tracker.probes.count) probes · missing \(missing) · late \(late) · pending at stop \(pending)\nReport: \(report.path)")
+            // Live episodes are saved by the hosted UI on its bounded background writer.
+            let report = try writer.directory.map { try Report.generate(directory: $0) }
+            if let report { print("Saved \(tracker.totalSent) probes · missing \(missing) · late \(late) · pending at stop \(pending)\nReport: \(report.path)") }
             if let failure { completion?(.failure(failure)) } else { completion?(.success(report)) }
         } catch { completion?(.failure(error)) }
     }

@@ -171,6 +171,15 @@ private struct SessionReportRoot: View {
 
 private struct SessionReportContent: View {
     let report: SessionAnalysis
+    private let clock: ReportTimeFormatter
+    @AppStorage("reportClockTime") private var clockTime = true
+    init(report: SessionAnalysis) {
+        self.report = report
+        self.clock = ReportTimeFormatter(startedUTC: report.startedUTC)
+    }
+    private func timeLabel(_ seconds: Double, precise: Bool = false) -> String {
+        clock.string(seconds, clockTime: clockTime, precise: precise)
+    }
     @State private var range: ClosedRange<Double> = 0...1
     @State private var cursor: Double?
     @State private var from = "0"
@@ -206,7 +215,7 @@ private struct SessionReportContent: View {
             if !report.startedUTC.isEmpty { Text(report.startedUTC).font(.caption).foregroundStyle(.tertiary) }
             Menu {
                 ForEach(report.markers) { marker in
-                    Button("\(stamp(marker.time)) · \(marker.message)") {
+                    Button("\(timeLabel(marker.time)) · \(marker.message)") {
                         select(max(0, marker.time - 10)...min(report.duration, marker.time + 10)); cursor = marker.time
                     }
                 }
@@ -224,6 +233,8 @@ private struct SessionReportContent: View {
             Button("Apply", action: applyRange)
             Button("Full Session") { select(0...report.duration) }
             Spacer()
+            Toggle("Clock time", isOn: $clockTime).toggleStyle(.checkbox)
+                .disabled(!clock.available).help("Show measurement time in your local time zone. Range fields use seconds from the start.")
             Toggle("Log RTT", isOn: $logarithmic).toggleStyle(.checkbox)
         }.font(.callout).textFieldStyle(.roundedBorder).padding(14)
             .overlay(alignment: .bottomLeading) { if rangeError { Text("Enter a valid range within this recording.").font(.caption2).foregroundStyle(.red).padding(.leading, 14) } }
@@ -238,7 +249,7 @@ private struct SessionReportContent: View {
                 stat("Unanswered", value: "\(stats.missing)")
                 stat("Late Replies", value: "\(stats.late)")
             }
-            Text("\(stamp(range.lowerBound)) – \(stamp(range.upperBound)) · \(stats.sent) probes · \(stats.pending) pending").font(.caption).foregroundStyle(.secondary).monospacedDigit()
+            Text("\(timeLabel(range.lowerBound)) – \(timeLabel(range.upperBound)) · \(stats.sent) probes · \(stats.pending) pending").font(.caption).foregroundStyle(.secondary).monospacedDigit()
         }
     }
     private func stat(_ title: String, value: String) -> some View {
@@ -260,9 +271,9 @@ private struct SessionReportContent: View {
                     }
                 }
                 Spacer()
-                if let cursor { Text(stamp(cursor)).monospacedDigit() }
+                if let cursor { Text(timeLabel(cursor, precise: true)).monospacedDigit() }
             }.font(.caption).foregroundStyle(.secondary).frame(height: 16)
-            ReportChart(series: series, range: range, markers: report.markers, cursor: $cursor, select: select, gapLimit: gap, stepped: stepped, logarithmic: log, signal: metrics.first == .signal, binary: metrics.first == .awdl).frame(height: 150)
+            ReportChart(timeLabel: { timeLabel($0, precise: range.upperBound - range.lowerBound < 10) }, series: series, range: range, markers: report.markers, cursor: $cursor, select: select, gapLimit: gap, stepped: stepped, logarithmic: log, signal: metrics.first == .signal, binary: metrics.first == .awdl).frame(height: 150)
         }.padding(16).background(.background, in: RoundedRectangle(cornerRadius: 12))
     }
     private func select(_ value: ClosedRange<Double>) {
@@ -288,6 +299,7 @@ private func stamp(_ time: Double) -> String { String(format: "%02d:%02d", Int(t
 
 struct ReportChartSeries { let name: String; let points: [RecentSample] }
 private struct ReportChart: View {
+    let timeLabel: (Double) -> String
     let series: [ReportChartSeries]
     let range: ClosedRange<Double>
     let markers: [AnalysisMarker]
@@ -356,7 +368,7 @@ private struct ReportChart: View {
                 if let drag { let a = x(min(drag.0, drag.1)), b = x(max(drag.0, drag.1)); context.fill(Path(CGRect(x: a, y: 0, width: b - a, height: height)), with: .color(.accentColor.opacity(0.13))) }
                 for fraction in [0.0, 0.25, 0.5, 0.75, 1.0] {
                     let time = range.lowerBound + span * fraction
-                    context.draw(Text(stamp(time)).font(.system(size: 9, design: .monospaced)).foregroundColor(.secondary), at: CGPoint(x: x(time), y: height + 14), anchor: fraction == 1 ? .trailing : .center)
+                    context.draw(Text(timeLabel(time)).font(.system(size: 9, design: .monospaced)).foregroundColor(.secondary), at: CGPoint(x: x(time), y: height + 14), anchor: fraction == 0 ? .leading : fraction == 1 ? .trailing : .center)
                 }
             }
             .contentShape(Rectangle())
@@ -369,7 +381,7 @@ private struct ReportChart: View {
                 if let drag, abs(drag.1 - drag.0) > 0.1 { select(min(drag.0, drag.1)...max(drag.0, drag.1)) }
                 drag = nil
             })
-            .accessibilityLabel("\(series.map(\.name).joined(separator: ", ")) chart. Range \(stamp(range.lowerBound)) to \(stamp(range.upperBound)). Use the range fields to zoom.")
+            .accessibilityLabel("\(series.map(\.name).joined(separator: ", ")) chart. Range \(timeLabel(range.lowerBound)) to \(timeLabel(range.upperBound)). Use the range fields to zoom.")
         }
     }
     private func time(at x: CGFloat, width: CGFloat) -> Double {

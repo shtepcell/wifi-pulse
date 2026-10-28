@@ -31,3 +31,18 @@ test('missing Wi-Fi measurement explicitly breaks a rendered line',()=>{
  const cols=envelope([{t:0,y:-50},{t:1,y:null},{t:2,y:-65}],0,3,100);
  assert.equal(cols.length,2);assert.notEqual(cols[0].segment,cols[1].segment);
 });
+test('clock labels add elapsed time to recording start in the chosen timezone',()=>{
+ const clock=context.window.WifiReport.createTimeFormatter('2026-10-28T20:43:08.250Z','Europe/Warsaw');
+ assert.equal(clock.available,true);
+ assert.equal(clock.format(60.5,true,true),'21:44:08.7');
+ assert.equal(clock.format(60.5,false),'1:00.5');
+});
+test('clock labels wrap midnight and invalid start times fall back to elapsed',()=>{
+ const clock=context.window.WifiReport.createTimeFormatter('2026-10-28T22:59:59Z','Europe/Warsaw');
+ assert.equal(clock.format(2,true),'00:00:01');
+ for(const start of [undefined,'','invalid']){
+  const fallback=context.window.WifiReport.createTimeFormatter(start,'UTC');
+  assert.equal(fallback.available,false);
+  assert.equal(fallback.format(61.2,true),'1:01.2');
+ }
+});

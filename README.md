@@ -6,9 +6,10 @@ A native macOS menu bar app for investigating Wi-Fi stutters while streaming gam
 
 ## Features
 
-- **Lightweight recording:** router probes every 100 ms by default; Wi-Fi metrics once per second. No internet probes, speed tests, or Wi-Fi scans.
-- **Live history:** five-minute graphs in a floating menu bar panel, including over fullscreen apps. Graph scrolling pauses when the panel is hidden and respects Reduce Motion.
-- **Lag markers:** press the microphone key without Fn while recording, or click **Mark Lag**. The microphone key is released after recording stops; standard F5 is unchanged. Availability depends on the keyboard and macOS settings.
+- **Always-on live monitoring:** starts when the menu app opens; router probes every 100 ms and Wi-Fi metrics once per second. No internet probes, speed tests, or Wi-Fi scans. **Pause Live** releases the microphone shortcut and stops collection.
+- **Bounded live history:** the last 15 minutes stay in memory, with event and byte caps. The floating panel works over fullscreen apps; graph scrolling pauses when hidden and respects Reduce Motion.
+- **Lag episodes:** press the microphone key without Fn during live monitoring, or click **Mark Lag**, to save up to 15 minutes before the marker and 30 seconds after it. Nearby markers share an episode, capped at 16 minutes total. Standard F5 is unchanged. Shortcut availability depends on the keyboard and macOS settings.
+- **Bounded storage:** live episodes are limited to 100, seven days, and 500 MiB in total, including HTML and temporary output. Oldest live episodes are removed automatically; ordinary recordings are preserved.
 - **Native report library:** browse recordings in a chosen folder, newest first. New sessions appear automatically while the window is open. Interrupted sessions are marked **Incomplete**.
 - **Interactive analysis:** select a time range, drag to zoom, jump to a lag marker, hover to compare measurements, and switch to logarithmic latency. Median, p95, maximum, unanswered, and late-reply statistics follow the selected range.
 - **Portable reports:** every session also includes a self-contained HTML report that works offline in a browser.
@@ -50,12 +51,14 @@ The launcher builds the CLI on first use if its release binary is missing. After
 
 <img src="docs/images/menu-bar.png" width="366" alt="Wi-Fi Pulse menu bar panel with live latency, signal, link rate, and traffic graphs">
 
-1. Click **Start Recording**, then play or use your network normally.
+1. Open the app: live monitoring starts automatically. Play or use your network normally; no session files are written until a lag is marked.
 2. When a stutter occurs, press the microphone key or click **Mark Lag**. Account for your reaction time when inspecting the result.
-3. Click **Stop Recording**, then **Reports**.
-4. Choose a session in the sidebar. Use **Lag Markers** to inspect the ten seconds on either side of a marker, or select a range yourself.
+3. Wait for the 30-second follow-up capture and **Lag episode saved**, then open **Reports**. Repeated markers extend the follow-up, within the 16-minute episode limit.
+4. Choose an episode in the sidebar. Use **Lag Markers** to inspect the ten seconds on either side of a marker, or select a range yourself.
 
-Closing the panel does not stop recording. **More → Settings…** provides router and interface overrides, useful when a VPN changes the default route. Blank fields select them automatically.
+Closing the panel keeps live running. **Pause Live / Resume Live** control monitoring. Pausing, quitting, sleep, or a network change saves any marked episode with the available follow-up and an explanation if truncated. Unmarked history is discarded. After waking or a detected route change, the app retries the connection every five seconds and starts a fresh buffer; periods on different routes are not combined. Sleep is excluded from loss measurement.
+
+**More → Settings…** provides router and interface overrides, useful when a VPN changes the default route. Pause live to edit settings. Blank fields select them automatically. The microphone key remains reserved while live is active; pause live to restore its normal action.
 
 The menu app initially saves sessions in:
 
@@ -63,7 +66,9 @@ The menu app initially saves sessions in:
 ~/Library/Application Support/Wi-Fi Pulse/Sessions/
 ```
 
-The folder button in **Reports** changes the shared location used for browsing and future recordings. The chosen folder persists between launches. Existing recordings are not moved automatically. The app does not install a background helper or enable launch at login.
+The folder button in **Reports** changes the shared location used for browsing and future episodes. The chosen folder persists between launches. Existing recordings are not moved automatically. Live retention applies to the current folder; folders no longer selected are not maintained. The app does not install a background helper or enable launch at login.
+
+Live buffers each hold at most 40,000 events / 12 MiB of encoded data; auxiliary probe tracking is capped too. A full buffer drops old history; a full marked episode omits further measurements and records a warning. The writer accepts at most two captures/saves combined. If it is busy, a new marker is rejected with a message. Saving and HTML generation run in the background. Only app-owned `live-UUID` folders with valid ownership markers and known regular files can be cleaned up. A damaged managed folder blocks further saves and reports an error, preserving its contents. Temporary saves count toward the storage budget and valid interrupted staging folders are cleaned up. Limits cover managed live episodes, not pre-existing manual recordings.
 
 ## Command line
 
@@ -112,14 +117,16 @@ The recorder does not change AWDL, Wi-Fi, Bluetooth, router, or Location Service
 
 ## Session files and privacy
 
-Each recording contains:
+Each CLI recording contains:
 
 - `metadata.json`: schema version, app version, start time, OS, selected router/interface, and sampling configuration.
 - `events.jsonl`: timestamped sends, replies, timeouts, measurements, markers, diagnostics, and recording boundaries.
 - `ping.log`: original system ping output and its timestamps.
 - `report.html`: a self-contained report containing the session data.
 
-The native report reads `metadata.json` and `events.jsonl` directly; it does not embed a browser. HTML additionally supports Option-scroll zoom. A truncated final JSONL line is ignored with a warning; malformed complete lines are rejected.
+Live episodes use the same metadata, event, and HTML formats, plus a small ownership marker for retention. They omit the redundant raw `ping.log`; unsaved live data never reaches disk. CLI recording retains its existing full-session behavior.
+
+The native report reads `metadata.json` and `events.jsonl` directly; it does not embed a browser. Both reports offer Clock time / Elapsed display for chart axes, hover labels, and lag markers. Clock time uses the viewing Mac’s local time zone; range fields remain seconds from the start. HTML additionally supports Option-scroll zoom. A truncated final JSONL line is ignored with a warning; malformed complete lines are rejected.
 
 All data remains on this Mac. The app does not collect SSIDs, BSSIDs, MAC addresses, or packet contents, and does not upload recordings. Sessions do contain local router addresses, timestamps, network metrics, and marker text. Review them before sharing. The report-library screenshot uses synthetic data; the menu-bar screenshot shows a live recording.
 
@@ -131,9 +138,12 @@ node --test Tests/report.test.cjs
 
 # Optional live integration test; sends probes to the local Wi-Fi router.
 python3 Tests/smoke.py .build/debug/wifi-analyzer
+
+# Optional live-buffer integration: no unmarked files, then save a marked episode.
+WIFI_PULSE_LIVE_TEST=1 swift test --filter LiveRecorderIntegrationTests
 ```
 
-Stop menu-app recording before running the microphone hotkey test, which reserves the same physical key. To run the other tests while recording continues:
+Pause menu-app live monitoring (or stop an older app’s recording) before running the microphone hotkey test, which reserves the same physical key. To run the other tests while monitoring continues:
 
 ```sh
 swift test --skip MicrophoneHotKeyTests

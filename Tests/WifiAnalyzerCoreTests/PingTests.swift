@@ -37,3 +37,25 @@ final class PingTests: XCTestCase {
     }
 
 }
+
+final class BoundedPingTests: XCTestCase {
+    func testBoundedTrackerKeepsIDsUniqueThroughEvictionAndSequenceWrap() {
+        var tracker = PingTracker(retention: 900, maxProbes: 10_000)
+        for i in 0..<100_000 {
+            tracker.sent(sequence: i % 65536, at: Double(i) * 0.1)
+            _ = tracker.expire(at: Double(i) * 0.1, timeout: 1)
+        }
+        XCTAssertLessThanOrEqual(tracker.probes.count, 10_000)
+        XCTAssertGreaterThanOrEqual(tracker.probes.first!.sent, 9099)
+        XCTAssertEqual(tracker.totalSent, 100_000)
+        XCTAssertEqual(tracker.reply(sequence: 99_999 % 65536, latencyMS: 2, at: 10000)?.id, 99_999)
+        XCTAssertNil(tracker.reply(sequence: 0, latencyMS: 2, at: 10000))
+    }
+    func testLiveLossTrackingDoesNotKeepEveryLostProbeForever() {
+        var snapshot = LiveSnapshot()
+        for i in 0..<100_000 {
+            snapshot.consume(["kind": "timeout", "id": i, "t": Double(i), "sent": Double(i) - 1])
+        }
+        XCTAssertLessThanOrEqual(snapshot.missing, 901)
+    }
+}

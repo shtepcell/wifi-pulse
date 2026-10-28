@@ -56,6 +56,7 @@ import WifiAnalyzerCore
             image?.isTemplate = true
             self?.statusItem?.button?.image = image
         }
+        model.activateLive()
         showPanel()
     }
     func windowDidChangeOcclusionState(_ notification: Notification) {
@@ -110,8 +111,8 @@ private struct MenuContent: View {
                 }.padding(.top, 5)
             } else {
                 VStack(alignment: .leading, spacing: 9) {
-                    Text("Ready to record").font(.system(size: 30, weight: .light))
-                    Text("Capture latency, Wi-Fi signal, and network activity while you play.")
+                    Text(model.liveEnabled ? "Waiting for Wi-Fi" : "Live paused").font(.system(size: 30, weight: .light))
+                    Text("The last 15 minutes stay in memory. Mark a lag to save an episode.")
                         .font(.system(size: 12)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }.padding(.top, 28).padding(.bottom, 4)
@@ -165,7 +166,7 @@ private struct MenuContent: View {
                 ProgressView().controlSize(.mini)
             } else {
                 if model.phase == .recording { Circle().fill(.red).frame(width: 5, height: 5) }
-                Text(model.phase == .recording ? model.timeText : "Ready")
+                Text(model.phase == .recording ? "Live · \(model.timeText)" : model.statusText)
                     .font(.system(size: 11, weight: .medium)).monospacedDigit().foregroundStyle(.secondary)
             }
             Button(action: onClose) {
@@ -180,7 +181,7 @@ private struct MenuContent: View {
             HStack {
                 Text(model.phase == .idle && hasSession ? "Last router latency" : "Router latency")
                 Spacer()
-                Text("Last 5 min").font(.system(size: 10))
+                Text("Last 15 min").font(.system(size: 10))
             }.font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary)
             HStack(alignment: .firstTextBaseline, spacing: 7) {
                 Text(latencyValue).font(.system(size: 62, weight: .light)).monospacedDigit()
@@ -222,8 +223,8 @@ private struct MenuContent: View {
     }
     private var controls: some View {
         HStack(spacing: 10) {
-            actionButton(model.phase == .recording ? "Stop Recording" : "Start Recording", symbol: model.phase == .recording ? "stop.fill" : "record.circle", primary: true, disabled: model.phase == .starting || model.phase == .stopping) {
-                model.phase == .recording ? model.stop() : model.start()
+            actionButton(model.liveEnabled ? "Pause Live" : "Resume Live", symbol: model.liveEnabled ? "pause.fill" : "play.fill", primary: true, disabled: model.phase == .stopping) {
+                model.liveEnabled ? model.stop() : model.start()
             }
             actionButton("Mark Lag", symbol: "flag", primary: false, disabled: model.phase != .recording, action: model.markLag)
         }
@@ -262,7 +263,11 @@ private struct MenuContent: View {
         if model.phase == .recording && !model.metricsFresh {
             notice("Waiting for Wi-Fi measurements…", symbol: "wifi", color: .secondary)
         }
-        if !model.feedback.isEmpty { notice(model.feedback, symbol: "checkmark", color: .secondary) }
+        if let remaining = model.captureRemaining {
+            notice("Lag episode · \(remaining)s remaining", symbol: "flag", color: .secondary)
+        } else if model.savingEpisodes > 0 {
+            notice("Saving lag episode…", symbol: "square.and.arrow.down", color: .secondary)
+        } else if !model.feedback.isEmpty { notice(model.feedback, symbol: "checkmark", color: .secondary) }
     }
     private func notice(_ message: String, symbol: String, color: Color) -> some View {
         Label(message, systemImage: symbol).font(.system(size: 11)).foregroundStyle(color)
@@ -277,6 +282,8 @@ private struct MenuContent: View {
             Text("Leave blank to detect automatically. If you use a VPN, enter your local router and Wi-Fi interface.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Button("Recordings Folder…", action: model.chooseSessionsFolder)
+            Text("Live episodes: up to 100, 7 days, or 500 MiB. Oldest episodes are deleted automatically; ordinary recordings are kept.")
+                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             Text(model.sessionsRoot.path).font(.caption2).foregroundStyle(.tertiary)
                 .lineLimit(2).truncationMode(.middle).textSelection(.enabled)
         }.disabled(model.busy)

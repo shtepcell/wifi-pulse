@@ -51,7 +51,7 @@ public struct SessionAnalysis: Sendable {
         var probes: [Int: AnalysisProbe] = [:]
         var series: [RecentMetric: [RecentSample]] = [:]
         var markers: [AnalysisMarker] = []
-        var warnings: [String] = []
+        var warnings = LiveEpisode.warnings(metadata: meta)
         func number(_ value: Any?) -> Double? {
             guard let n = value as? NSNumber, n.doubleValue.isFinite else { return nil }
             return n.doubleValue

@@ -40,9 +40,9 @@ struct RecentSparkline: View {
             } ?? end
             plot(endingAt: displayEnd)
         }
-        .accessibilityLabel("\(label), last 5 minutes")
+        .accessibilityLabel("\(label), last \(Int(window / 60)) minutes")
         .accessibilityValue(summary)
-        .help("\(label) · Last 5 minutes\n\(summary)\nOrange: lag markers. Red: delayed or missing replies.")
+        .help("\(label) · Last \(Int(window / 60)) minutes\n\(summary)\nOrange: lag markers. Red: delayed or missing replies.")
     }
     private func plot(endingAt end: Double) -> some View {
         Canvas { context, size in

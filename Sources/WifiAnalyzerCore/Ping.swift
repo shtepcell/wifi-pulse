@@ -31,26 +31,42 @@ public struct Probe: Equatable {
 }
 
 public struct PingTracker {
-    public private(set) var probes: [Probe] = []
+    private var stored: [Int: Probe] = [:]
+    public var probes: [Probe] { stored.values.sorted { $0.id < $1.id } }
+    public private(set) var totalSent = 0
     private var latest: [Int: Int] = [:]
     private var pending: Set<Int> = []
-    public init() {}
-    public mutating func sent(sequence: Int, at: Double) {
-        let id = probes.count
-        probes.append(Probe(id: id, sequence: sequence, sent: at, latencyMS: nil, timedOut: false))
+    private let retention: Double?
+    private let maxProbes: Int
+    private var oldestID = 0
+    public init(retention: Double? = nil, maxProbes: Int = .max) {
+        self.retention = retention; self.maxProbes = max(1, maxProbes)
+    }
+    @discardableResult public mutating func sent(sequence: Int, at: Double) -> Int {
+        let id = totalSent
+        totalSent += 1
+        stored[id] = Probe(id: id, sequence: sequence, sent: at, latencyMS: nil, timedOut: false)
         latest[sequence] = id
         pending.insert(id)
+        while let first = stored[oldestID], stored.count > maxProbes || retention.map({ at - first.sent > $0 }) == true {
+            stored.removeValue(forKey: oldestID)
+            pending.remove(oldestID)
+            if latest[first.sequence] == oldestID { latest.removeValue(forKey: first.sequence) }
+            oldestID += 1
+        }
+        return id
     }
     public mutating func reply(sequence: Int, latencyMS: Double, at: Double) -> Probe? {
-        guard let id = latest[sequence], probes[id].latencyMS == nil else { return nil }
-        probes[id].latencyMS = latencyMS
-        probes[id].timedOut = probes[id].timedOut || latencyMS >= 1000
+        guard let id = latest[sequence], var probe = stored[id], probe.latencyMS == nil else { return nil }
+        probe.latencyMS = latencyMS
+        probe.timedOut = probe.timedOut || latencyMS >= 1000
+        stored[id] = probe
         pending.remove(id)
-        return probes[id]
+        return probe
     }
     public mutating func expire(at: Double, timeout: Double) -> [Probe] {
-        let expired = pending.filter { at - probes[$0].sent >= timeout }.sorted()
-        for id in expired { probes[id].timedOut = true; pending.remove(id) }
-        return expired.map { probes[$0] }
+        let expired = pending.filter { stored[$0].map { at - $0.sent >= timeout } ?? false }.sorted()
+        for id in expired { stored[id]?.timedOut = true; pending.remove(id) }
+        return expired.compactMap { stored[$0] }
     }
 }

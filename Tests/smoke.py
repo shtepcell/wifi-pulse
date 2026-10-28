@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import signal
+import select
 import statistics
 import subprocess
 import sys
@@ -15,6 +16,12 @@ with tempfile.TemporaryDirectory(prefix='wifi-analyzer-smoke-') as tmp:
     session = Path(tmp) / 'recording'
     p = subprocess.Popen([binary, 'record', '--duration', '4', '--output', str(session)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     try:
+        # Router discovery happens before the session clock starts. Synchronize
+        # with the recorder instead of assuming process startup takes <300 ms.
+        ready, _, _ = select.select([p.stdout], [], [], 10)
+        assert ready, 'Recorder did not become ready within 10 seconds'
+        started_line = p.stdout.readline()
+        assert started_line.startswith('Recording Wi-Fi'), started_line
         time.sleep(1)
         p.stdin.write('Integration lag marker\n')
         p.stdin.flush()

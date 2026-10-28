@@ -15,15 +15,20 @@ public struct LiveSnapshot {
     public private(set) var markers = 0
     public private(set) var missing = 0
     public private(set) var issues: [String] = []
-    private var unanswered: Set<Int> = []
+    private var unanswered: [Int: Double] = [:]
+    private var lastTrim = -Double.infinity
     public init() {}
     public mutating func consume(_ event: [String: Any]) {
+        if let time = event["t"] as? Double, time - lastTrim >= 1 {
+            unanswered = unanswered.filter { $0.value >= time - 900 }
+            lastTrim = time
+        }
         switch event["kind"] as? String {
         case "send": sent += 1
         case "timeout":
-            if let id = event["id"] as? Int { unanswered.insert(id) }
+            if let id = event["id"] as? Int { unanswered[id] = event["sent"] as? Double ?? event["t"] as? Double ?? 0 }
         case "reply":
-            if let id = event["id"] as? Int { unanswered.remove(id) }
+            if let id = event["id"] as? Int { unanswered.removeValue(forKey: id) }
             latestLatencyMS = event["latencyMS"] as? Double
             lastReplyAt = event["t"] as? Double
         case "marker": markers += 1

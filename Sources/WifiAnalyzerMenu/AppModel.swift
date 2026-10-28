@@ -7,15 +7,18 @@ import WifiAnalyzerCore
     enum Phase { case idle, starting, recording, stopping }
     @Published private(set) var phase: Phase = .idle
     @Published private(set) var snapshot = LiveSnapshot()
-    @Published private(set) var history = RecentHistory()
+    @Published private(set) var history = RecentHistory(window: 900)
     @Published private(set) var historyClockOrigin: TimeInterval?
     @Published var panelVisible = false
     @Published private(set) var elapsed = 0.0
-    @Published private(set) var route = "Local router · \(Int(Options.defaultInterval * 1000)) ms"
+    @Published private(set) var route = "Local router · 100 ms"
     @Published private(set) var lastReport: URL?
     @Published private(set) var errorMessage: String?
     @Published private(set) var hotKeyError: String?
     @Published private(set) var feedback = ""
+    @Published private(set) var liveEnabled = true
+    @Published private(set) var captureRemaining: Int?
+    @Published private(set) var savingEpisodes = 0
     @Published var gatewayOverride = UserDefaults.standard.string(forKey: "gatewayOverride") ?? ""
     @Published var interfaceOverride = UserDefaults.standard.string(forKey: "interfaceOverride") ?? ""
     @Published private(set) var sessionsRoot: URL
@@ -23,12 +26,23 @@ import WifiAnalyzerCore
     private var reportWindow: SessionReportWindowController?
     private var recorder: Recorder?
     private var accumulator = LiveSnapshot()
-    private var historyAccumulator = RecentHistory()
+    private var historyAccumulator = RecentHistory(window: 900)
+    private var capture = LiveCapture()
+    private var captureReserved = false
+    private var captureRoot: URL?
+    private var currentMetadata: [String: Any] = [:]
+    private let store = EpisodeStore()
+    private var lifecycle = LiveLifecycle()
     private var refreshTimer: Timer?
+    private var workspaceObservers: [NSObjectProtocol] = []
+    private var retryAt = Date.distantPast
+    private var maintenanceAt = Date.distantPast
+    private var stopReason = "Monitoring stopped"
+    private var markerAccepted = false
+    private var flushStarted = false
+    private var discoveryInFlight = false
     private lazy var microphoneHotKey = MicrophoneHotKey { [weak self] in self?.recordLagMarker("Lag · microphone key") }
     @Published private(set) var microphoneShortcutAvailable = false
-    private var feedbackToken = UUID()
-    private var quitAfterSave = false
 
     init() {
         let path = UserDefaults.standard.string(forKey: "sessionsRoot")
@@ -39,10 +53,10 @@ import WifiAnalyzerCore
     var timeText: String { String(format: "%02d:%02d", Int(elapsed) / 60, Int(elapsed) % 60) }
     var statusText: String {
         switch phase {
-        case .idle: return "Ready to Record"
+        case .idle: return liveEnabled ? "Waiting for Wi-Fi" : "Live Paused"
         case .starting: return "Connecting…"
-        case .recording: return "Recording · \(timeText)"
-        case .stopping: return "Saving Report…"
+        case .recording: return "Live · \(timeText)"
+        case .stopping: return "Pausing…"
         }
     }
     var metricsFresh: Bool { snapshot.lastMetricsAt.map { elapsed - $0 < 3 } ?? false }
@@ -50,101 +64,171 @@ import WifiAnalyzerCore
         guard let at = snapshot.lastReplyAt, elapsed - at < 2, let rtt = snapshot.latestLatencyMS else { return phase == .recording ? "No Reply" : "—" }
         return String(format: "%.1f ms", rtt)
     }
+    func activateLive() {
+        guard refreshTimer == nil else { return }
+        let center = NSWorkspace.shared.notificationCenter
+        workspaceObservers.append(center.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.willSleep() }
+        })
+        workspaceObservers.append(center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.didWake() }
+        })
+        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refresh() }
+        }
+        refreshTimer = timer; RunLoop.main.add(timer, forMode: .common)
+        refresh()
+    }
+    private func refresh() {
+        if phase == .recording || phase == .stopping {
+            elapsed = recorder?.elapsed ?? elapsed
+            if phase == .recording, let episode = capture.advance(to: elapsed) { save(episode) }
+            snapshot = accumulator
+            historyAccumulator.advance(to: elapsed)
+            // Hidden panels do not need full history copies or graph invalidation.
+            if panelVisible { history = historyAccumulator }
+            captureRemaining = capture.captureDeadline.map { max(0, Int(ceil($0 - elapsed))) }
+        }
+        if lifecycle.shouldRun, phase == .idle, Date() >= retryAt { connect() }
+        if Date() >= maintenanceAt {
+            maintenanceAt = Date().addingTimeInterval(600)
+            store.maintain(root: sessionsRoot) { [weak self] error in
+                if let error { self?.errorMessage = "Live storage cleanup: \(error)" }
+            }
+        }
+    }
     func start() {
-        guard phase == .idle else { return }
-        errorMessage = nil; feedback = ""; elapsed = 0
-        accumulator = LiveSnapshot(); snapshot = accumulator
-        historyAccumulator = RecentHistory(); history = historyAccumulator
-        historyClockOrigin = nil
-        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
-        let folder = sessionsRoot.appendingPathComponent("session-\(stamp)-\(UUID().uuidString.prefix(6))")
-        var args = ["record", "--output", folder.path]
+        guard !lifecycle.quitting else { return }
+        lifecycle.resume(); liveEnabled = true; retryAt = .distantPast
+        if phase == .idle { connect() }
+    }
+    private func connect() {
+        guard lifecycle.shouldRun, phase == .idle, !discoveryInFlight else { return }
+        var args = ["record"]
         let gateway = gatewayOverride.trimmingCharacters(in: .whitespacesAndNewlines)
         let interface = interfaceOverride.trimmingCharacters(in: .whitespacesAndNewlines)
         if !gateway.isEmpty { args += ["--gateway", gateway] }
         if !interface.isEmpty { args += ["--interface", interface] }
         let options: Options
         do { options = try Options.parse(args) }
-        catch { errorMessage = String(describing: error); return }
+        catch { errorMessage = String(describing: error); retryAt = Date().addingTimeInterval(5); return }
         UserDefaults.standard.set(gateway, forKey: "gatewayOverride")
         UserDefaults.standard.set(interface, forKey: "interfaceOverride")
-        phase = .starting
-        // Router discovery and CoreWLAN initialization must not block the popover.
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let result = Result { try Recorder(options: options) }
-            DispatchQueue.main.async { [weak self] in self?.begin(result) }
+        phase = .starting; discoveryInFlight = true
+        let generation = lifecycle.generation
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let result = Result { try Recorder(options: options, live: true) }
+            DispatchQueue.main.async { [weak self] in self?.begin(result, generation: generation) }
         }
     }
-    private func begin(_ result: Result<Recorder, Error>) {
+    private func begin(_ result: Result<Recorder, Error>, generation: Int) {
+        discoveryInFlight = false
+        guard lifecycle.shouldRun, lifecycle.generation == generation, phase == .starting else { return }
         do {
             let recorder = try result.get()
             self.recorder = recorder
-            route = "\(recorder.interfaceName) → \(recorder.gatewayAddress) · \(Int(Options.defaultInterval * 1000)) ms"
-            recorder.onEvent = { [weak self] event in
-                guard let self else { return }
-                self.accumulator.consume(event)
-                self.historyAccumulator.consume(event)
-                if event["kind"] as? String == "stopping" { self.disableMicrophoneKey(); self.phase = .stopping }
-            }
+            accumulator = LiveSnapshot(); snapshot = accumulator
+            historyAccumulator = RecentHistory(window: 900); history = historyAccumulator
+            capture = LiveCapture(); elapsed = 0; historyClockOrigin = nil
+            currentMetadata = recorder.metadata
+            errorMessage = nil; stopReason = "Network changed or monitoring stopped"
+            route = "\(recorder.interfaceName) → \(recorder.gatewayAddress) · 100 ms"
+            recorder.onEvent = { [weak self] event in self?.consume(event) }
             try recorder.start(interactive: false) { [weak self] result in self?.completed(result) }
             historyClockOrigin = ProcessInfo.processInfo.systemUptime - recorder.elapsed
             phase = .recording
+            hotKeyError = nil
             do {
                 try microphoneHotKey.setEnabled(true)
                 microphoneShortcutAvailable = true
             } catch { hotKeyError = String(describing: error) }
-            let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
-                DispatchQueue.main.async { [weak self] in
-                    guard let self, self.phase == .recording || self.phase == .stopping else { return }
-                    self.snapshot = self.accumulator
-                    self.elapsed = self.recorder?.elapsed ?? self.elapsed
-                    self.historyAccumulator.advance(to: self.elapsed)
-                    self.history = self.historyAccumulator
-                }
-            }
-            refreshTimer = timer
-            RunLoop.main.add(timer, forMode: .common)
         } catch {
-            recorder = nil; phase = .idle
-            errorMessage = "Couldn’t start recording: \(error)"
+            recorder?.onEvent = nil; recorder = nil; phase = .idle
+            errorMessage = "Waiting for Wi-Fi: \(error)"
+            retryAt = Date().addingTimeInterval(5)
         }
     }
+    private func consume(_ event: [String: Any]) {
+        let kind = event["kind"] as? String
+        let time = event["t"] as? Double ?? elapsed
+        if kind == "stopping" {
+            disableMicrophoneKey(); phase = .stopping
+            if let episode = capture.finish(at: time, reason: stopReason) { save(episode) }
+        } else if kind != "end" {
+            do {
+                if let episode = try capture.consume(event) { save(episode) }
+                if kind == "marker" { markerAccepted = true }
+            } catch {
+                errorMessage = "Live capture: \(error)"
+                if !capture.isCapturing, captureReserved { store.release(); captureReserved = false }
+                if kind == "marker" { return }
+            }
+        }
+        accumulator.consume(event)
+        historyAccumulator.consume(event)
+    }
     func stop() {
-        guard phase == .recording else { return }
-        disableMicrophoneKey()
-        phase = .stopping; recorder?.stop()
+        lifecycle.pause(); liveEnabled = false
+        stopRecorder(reason: "Live paused")
+    }
+    private func stopRecorder(reason: String) {
+        stopReason = reason; disableMicrophoneKey()
+        if phase == .starting { phase = .idle }
+        if phase == .recording { phase = .stopping; recorder?.stop() }
+    }
+    func willSleep() {
+        lifecycle.sleep()
+        stopRecorder(reason: "Mac went to sleep")
+    }
+    func didWake() {
+        lifecycle.wake(); retryAt = .distantPast
+        // A stale recorder must finish before a new network period can start.
+        if lifecycle.shouldRun, phase == .idle { connect() }
     }
     private func disableMicrophoneKey() {
-        try? microphoneHotKey.setEnabled(false)
-        microphoneShortcutAvailable = false
+        try? microphoneHotKey.setEnabled(false); microphoneShortcutAvailable = false
     }
     func markLag() { recordLagMarker("Lag · menu app") }
     private func recordLagMarker(_ label: String) {
-        guard phase == .recording, let recorder, recorder.markLag(label) else { return }
+        guard phase == .recording, let recorder else { return }
+        if let episode = capture.advance(to: recorder.elapsed) { save(episode) }
+        if !capture.isCapturing {
+            guard store.reserve() else { errorMessage = "Episode queue is full. Wait for a save to finish, then mark the lag again."; return }
+            captureReserved = true; captureRoot = sessionsRoot
+        }
+        markerAccepted = false
+        guard recorder.markLag(label), markerAccepted else {
+            if !capture.isCapturing, captureReserved { store.release(); captureReserved = false }
+            return
+        }
         snapshot = accumulator; elapsed = recorder.elapsed
         historyAccumulator.advance(to: elapsed); history = historyAccumulator
-        let token = UUID(); feedbackToken = token
-        feedback = "Marker \(accumulator.markers) · \(timeText)"
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-            if self?.feedbackToken == token { self?.feedback = "" }
+        captureRemaining = capture.captureDeadline.map { max(0, Int(ceil($0 - elapsed))) }
+        feedback = "Lag marked · collecting 30 seconds after the event"
+    }
+    private func save(_ episode: LiveEpisode) {
+        guard captureReserved else { errorMessage = "Episode could not be saved: no queue reservation"; return }
+        captureReserved = false; savingEpisodes += 1
+        captureRemaining = nil
+        store.submitReserved(episode, metadata: currentMetadata, root: captureRoot ?? sessionsRoot) { [weak self] result in
+            guard let self else { return }
+            self.savingEpisodes -= 1
+            switch result {
+            case .success(let url): self.rememberReport(url); self.feedback = "Lag episode saved"
+            case .failure(let error): self.errorMessage = "Couldn’t save lag episode: \(error)"
+            }
         }
     }
-    private func completed(_ result: Result<URL, Error>) {
+    private func completed(_ result: Result<URL?, Error>) {
         disableMicrophoneKey()
-        refreshTimer?.invalidate(); refreshTimer = nil
-        snapshot = accumulator; elapsed = recorder?.elapsed ?? elapsed
-        // The end event freezes the graph clock before HTML generation begins.
-        history = historyAccumulator
-        let possibleReport = recorder?.sessionDirectory.appendingPathComponent("report.html")
+        elapsed = recorder?.elapsed ?? elapsed
+        if let episode = capture.finish(at: elapsed, reason: stopReason) { save(episode) }
+        if captureReserved { store.release(); captureReserved = false }
+        snapshot = accumulator; history = historyAccumulator; historyClockOrigin = nil
         recorder?.onEvent = nil; recorder = nil; phase = .idle
-        switch result {
-        case .success(let url):
-            rememberReport(url); feedback = "Report Saved"
-        case .failure(let error):
-            errorMessage = "Recording ended with an error: \(error)"
-            if let possibleReport, FileManager.default.fileExists(atPath: possibleReport.path) { rememberReport(possibleReport) }
-        }
-        if quitAfterSave { NSApp.reply(toApplicationShouldTerminate: true) }
+        if case .failure(let error) = result { errorMessage = "Live interrupted: \(error)" }
+        retryAt = Date().addingTimeInterval(5)
+        if lifecycle.quitting { finishQuit() }
     }
     private func rememberReport(_ url: URL) {
         lastReport = url; UserDefaults.standard.set(url.path, forKey: "lastReport")
@@ -184,9 +268,17 @@ import WifiAnalyzerCore
         }
     }
     func prepareToQuit() -> NSApplication.TerminateReply {
-        guard recorder != nil else { return .terminateNow }
-        quitAfterSave = true
-        if phase == .recording { stop() }
+        lifecycle.quit(); liveEnabled = false
+        refreshTimer?.invalidate(); refreshTimer = nil
+        for observer in workspaceObservers { NSWorkspace.shared.notificationCenter.removeObserver(observer) }
+        workspaceObservers.removeAll()
+        stopRecorder(reason: "App closed")
+        if recorder == nil { finishQuit() }
         return .terminateLater
+    }
+    private func finishQuit() {
+        guard !flushStarted else { return }
+        flushStarted = true
+        store.flush { NSApp.reply(toApplicationShouldTerminate: true) }
     }
 }

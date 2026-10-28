@@ -22,6 +22,7 @@
 <label>to <input id="to" type="number" min="0" step="0.1" aria-label="Range end in seconds"> s</label>
 <button id="apply">Apply</button><button id="reset">Full Session</button>
 <select id="markers" aria-label="Jump to a lag marker"><option value="">Lag Markers</option></select>
+<label>Time <select id="timeMode" aria-label="Time display"><option value="clock">Clock time</option><option value="elapsed">Elapsed</option></select></label>
 <label><input id="log" type="checkbox"> Logarithmic RTT</label>
 </div></div>
 <p class="muted" id="rangeInfo"></p><p class="muted">Drag across a chart to zoom in. Use Option + scroll to change the scale. Hover to compare measurements.</p>
@@ -57,21 +58,34 @@ function envelope(points,start,end,width){
   for(const p of points){if(!Number.isFinite(p.y)){segment++;continue;}if(p.t<start||p.t>end)continue;const x=Math.max(0,Math.min(width-1,Math.floor((p.t-start)/(end-start)*width))),key=segment+':'+x;let c=columns.get(key);if(!c){c={x,min:p.y,max:p.y,last:p.y,t:p.t,segment};columns.set(key,c);}else{c.min=Math.min(c.min,p.y);c.max=Math.max(c.max,p.y);c.last=p.y;c.t=p.t;}}
   return [...columns.values()].sort((a,b)=>a.x-b.x);
 }
-window.WifiReport={prepare,statistics,envelope};
+function createTimeFormatter(startedUTC,timeZone){
+ const start=typeof startedUTC==='string'&&startedUTC?Date.parse(startedUTC):NaN;
+ const available=Number.isFinite(start);
+ const options={hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23',...(timeZone?{timeZone}:{})};
+ const clock=new Intl.DateTimeFormat('en-GB',options),preciseClock=new Intl.DateTimeFormat('en-GB',{...options,fractionalSecondDigits:1});
+ return {available,format(t,clockTime=true,precise=false){
+  if(clockTime&&available)return (precise?preciseClock:clock).format(new Date(start+t*1000));
+  return `${Math.floor(t/60)}:${(t%60).toFixed(1).padStart(4,'0')}`;
+ }};
+}
+window.WifiReport={prepare,statistics,envelope,createTimeFormatter};
 const payload=JSON.parse(document.getElementById('session-data').textContent),meta=payload.metadata,events=payload.events;
 const model=prepare(events),$=id=>document.getElementById(id),finite=Number.isFinite;
 const duration=events.reduce((maximum,e)=>Math.max(maximum,e.t),1);
 let view=[0,duration],cursor=null,drag=null;
 const fmt=(v,d=1)=>finite(v)?v.toLocaleString('en-US',{maximumFractionDigits:d}):'—';
-const time=t=>`${Math.floor(t/60)}:${(t%60).toFixed(1).padStart(4,'0')}`;
-$('subtitle').textContent=`${meta.interface||'—'} → ${meta.gateway||'—'} · ${meta.startedUTC?new Date(meta.startedUTC).toLocaleString('en-US'):''} · ${time(duration)}`;
+const clock=createTimeFormatter(meta.startedUTC);
+if(!clock.available){$('timeMode').value='elapsed';$('timeMode').disabled=true;}
+const time=(t,precise=false)=>clock.format(t,$('timeMode').value==='clock',precise);
+const eventTimeLabels=[];
+$('subtitle').textContent=`${meta.interface||'—'} → ${meta.gateway||'—'} · ${meta.startedUTC?new Date(meta.startedUTC).toLocaleString('en-US'):''} · ${clock.format(duration,false)}`;
 if(meta.synthetic){$('badge').textContent='Sample Data';$('badge').classList.add('demo');}
 $('metadata').textContent=JSON.stringify(meta,null,2);
 const warningList=[...(payload.warnings||[])];
 if(meta.synthetic)warningList.unshift('This report contains sample data, not measurements of your network.');
 if(!model.metrics.some(m=>finite(m.values?.rssiDBm)))warningList.push('Wi-Fi signal measurements are unavailable. An empty chart does not indicate a stable signal.');
 for(const text of warningList){const div=document.createElement('div');div.className='notice';div.textContent=text;$('warnings').append(div);}
-for(let i=0;i<model.markers.length;i++){const m=model.markers[i],option=document.createElement('option');option.value=String(i);option.textContent=`${time(m.t)} · ${m.message||'Lag'}`;$('markers').append(option);}
+for(let i=0;i<model.markers.length;i++){const m=model.markers[i],option=document.createElement('option');option.value=String(i);option.textContent=`${time(m.t)} · ${m.message||'Lag'}`;$('markers').append(option);eventTimeLabels.push({element:option,t:m.t,suffix:` · ${m.message||'Lag'}`});}
 if(!model.markers.length)$('markers').disabled=true;
 const table=document.createElement('table');
 let lastIssues='',lastChannel=null;
@@ -85,7 +99,7 @@ for(const e of events){
   }
   if(e.kind==='end')notable.push([e.t,`Finished: ${e.message||''}`]);
 }
-if(notable.length){for(const [t,text] of notable){const tr=document.createElement('tr'),a=document.createElement('td'),b=document.createElement('td'),button=document.createElement('button');button.textContent=time(t);button.onclick=()=>selectAround(t);a.append(button);b.textContent=text;tr.append(a,b);table.append(tr);}$('events').append(table);}else{$('events').textContent='No markers or diagnostic events.';}
+if(notable.length){for(const [t,text] of notable){const tr=document.createElement('tr'),a=document.createElement('td'),b=document.createElement('td'),button=document.createElement('button');button.textContent=time(t);eventTimeLabels.push({element:button,t,suffix:''});button.onclick=()=>selectAround(t);a.append(button);b.textContent=text;tr.append(a,b);table.append(tr);}$('events').append(table);}else{$('events').textContent='No markers or diagnostic events.';}
 const metrics=(field,scale=1)=>model.metrics.map(e=>({t:e.t,y:typeof e.values?.[field]==='boolean'?Number(e.values[field]):finite(e.values?.[field])?e.values[field]*scale:null}));
 const charts=[
 {id:'latency',series:[{points:model.probes.map(p=>({t:p.t,y:p.rtt})),color:'#0a84ff'}]},
@@ -98,12 +112,12 @@ function setView(start,end){if(!finite(start)||!finite(end)||end<=start)return;c
 function selectAround(t){setView(t-10,t+10);}
 let lastSummaryKey='';
 function summary(){
- const key=view.join('/');if(key===lastSummaryKey)return;lastSummaryKey=key;
+ const key=view.join('/')+$('timeMode').value;if(key===lastSummaryKey)return;lastSummaryKey=key;
  const probes=model.probes.filter(p=>p.t>=view[0]&&p.t<=view[1]),s=statistics(probes);
  $('median').textContent=fmt(s.median)+' ms';$('p95').textContent=fmt(s.p95)+' ms';$('maximum').textContent=fmt(s.max)+' ms';
  $('missing').textContent=`${s.missing} / ${s.sent}`;$('late').textContent=String(s.late);
  const gaps=probes.slice(1).map((p,i)=>(p.t-probes[i].t)*1000).sort((a,b)=>a-b);
- $('rangeInfo').textContent=`Range ${time(view[0])} – ${time(view[1])} · ${s.sent} probes · ${s.received} replies · ${s.pending} pending · interval: requested ${fmt(meta.requestedIntervalMS)} ms, observed median ${fmt(percentile(gaps,.5))} ms`;
+ $('rangeInfo').textContent=`Range${$('timeMode').value==='clock'?' (local time)':''} ${time(view[0])} – ${time(view[1])} · ${s.sent} probes · ${s.received} replies · ${s.pending} pending · interval: requested ${fmt(meta.requestedIntervalMS)} ms, observed median ${fmt(percentile(gaps,.5))} ms`;
 }
 function drawChart(chart){
  const canvas=$(chart.id),rect=canvas.getBoundingClientRect(),dpr=window.devicePixelRatio||1;
@@ -129,7 +143,7 @@ function drawChart(chart){
    const pixel=top+height*i/4,value=log?Math.pow(10,transform(high)+(transform(low)-transform(high))*i/4)-1:high+(low-high)*i/4;
    ctx.strokeStyle=getComputedStyle(document.documentElement).getPropertyValue('--line').trim();ctx.beginPath();ctx.moveTo(left,pixel);ctx.lineTo(left+width,pixel);ctx.stroke();ctx.fillStyle=getComputedStyle(document.documentElement).getPropertyValue('--muted').trim();ctx.textAlign='right';ctx.fillText(fmt(value,chart.id==='awdl'?1:0),left-8,pixel+4);
  }
- ctx.textAlign='center';for(let i=0;i<=5;i++)ctx.fillText(time(start+(end-start)*i/5),left+width*i/5,rect.height-7);
+ const ticks=Math.max(1,Math.min(5,Math.floor(width/90)));for(let i=0;i<=ticks;i++){ctx.textAlign=i===0?'left':i===ticks?'right':'center';ctx.fillText(time(start+(end-start)*i/ticks,end-start<10),left+width*i/ticks,rect.height-7);}
  ctx.save();ctx.beginPath();ctx.rect(left,top,width,height);ctx.clip();
  for(const m of model.markers)if(m.t>=start&&m.t<=end){ctx.strokeStyle='#c7770088';ctx.setLineDash([4,4]);ctx.beginPath();ctx.moveTo(x(m.t),top);ctx.lineTo(x(m.t),top+height);ctx.stroke();ctx.setLineDash([]);}
  for(const [pixel,missing] of chart.cache.losses){ctx.fillStyle=missing?'#ff718577':'#c7770044';ctx.fillRect(left+pixel,top,Math.max(1,width/(end-start)*.035),height);}
@@ -155,7 +169,7 @@ function draw(){if(pendingFrame)return;pendingFrame=true;requestAnimationFrame((
 function nearest(rows,t){let lo=0,hi=rows.length;while(lo<hi){const mid=(lo+hi)>>1;if(rows[mid].t<t)lo=mid+1;else hi=mid;}const a=rows[lo],b=rows[lo-1];return !a?b:!b?a:Math.abs(a.t-t)<Math.abs(b.t-t)?a:b;}
 function pointerTime(chart,event){const r=$(chart.id).getBoundingClientRect(),g=chart.geometry;return view[0]+Math.max(0,Math.min(1,(event.clientX-r.left-g.left)/g.width))*(view[1]-view[0]);}
 for(const chart of charts){const canvas=$(chart.id);
- canvas.addEventListener('pointermove',event=>{if(!chart.geometry)return;cursor=pointerTime(chart,event);if(drag?.id===chart.id)drag.x2=Math.max(chart.geometry.left,Math.min(chart.geometry.left+chart.geometry.width,event.offsetX));const p=nearest(model.probes,cursor),m=nearest(model.metrics,cursor);const nearP=p&&Math.abs(p.t-cursor)<Math.max(.2,(meta.requestedIntervalMS||50)/500),v=m&&Math.abs(m.t-cursor)<=1.5?m.values:{};$('cursorInfo').textContent=`${time(cursor)} · RTT ${nearP?fmt(p.rtt)+' ms':'—'} · RSSI ${fmt(v.rssiDBm)} dBm · noise ${fmt(v.noiseDBm)} dBm · channel ${v.channel??'—'} · AWDL ${v.awdlUp===true?'UP':v.awdlUp===false?'OFF':'—'}`;draw();});
+ canvas.addEventListener('pointermove',event=>{if(!chart.geometry)return;cursor=pointerTime(chart,event);if(drag?.id===chart.id)drag.x2=Math.max(chart.geometry.left,Math.min(chart.geometry.left+chart.geometry.width,event.offsetX));const p=nearest(model.probes,cursor),m=nearest(model.metrics,cursor);const nearP=p&&Math.abs(p.t-cursor)<Math.max(.2,(meta.requestedIntervalMS||50)/500),v=m&&Math.abs(m.t-cursor)<=1.5?m.values:{};$('cursorInfo').textContent=`${time(cursor,true)} · RTT ${nearP?fmt(p.rtt)+' ms':'—'} · RSSI ${fmt(v.rssiDBm)} dBm · noise ${fmt(v.noiseDBm)} dBm · channel ${v.channel??'—'} · AWDL ${v.awdlUp===true?'UP':v.awdlUp===false?'OFF':'—'}`;draw();});
  canvas.addEventListener('pointerleave',()=>{if(!drag){cursor=null;$('cursorInfo').textContent='';draw();}});
  canvas.addEventListener('pointerdown',event=>{if(event.button!==0||!chart.geometry)return;canvas.setPointerCapture(event.pointerId);const x=Math.max(chart.geometry.left,Math.min(chart.geometry.left+chart.geometry.width,event.offsetX));drag={id:chart.id,x1:x,x2:x,t:pointerTime(chart,event)};});
  canvas.addEventListener('pointerup',event=>{if(!drag)return;const first=drag.t,last=pointerTime(chart,event),distance=Math.abs(drag.x2-drag.x1);drag=null;if(distance>8)setView(Math.min(first,last),Math.max(first,last));else draw();});
@@ -163,6 +177,7 @@ for(const chart of charts){const canvas=$(chart.id);
  canvas.addEventListener('wheel',event=>{if(!chart.geometry||!event.altKey)return;event.preventDefault();const anchor=pointerTime(chart,event),span=view[1]-view[0],factor=event.deltaY>0?1.25:.8,portion=(anchor-view[0])/span;setView(anchor-span*factor*portion,anchor+span*factor*(1-portion));},{passive:false});
 }
 $('apply').onclick=()=>setView(Number($('from').value),Number($('to').value));$('reset').onclick=()=>{cursor=null;$('markers').value='';setView(0,duration);};$('markers').onchange=()=>{if($('markers').value!=='')selectAround(model.markers[Number($('markers').value)].t);};$('log').onchange=draw;
+$('timeMode').onchange=()=>{for(const {element,t,suffix} of eventTimeLabels)element.textContent=time(t)+suffix;cursor=null;$('cursorInfo').textContent='';draw();};
 window.addEventListener('resize',draw);setView(0,duration);
 </script>
 </body></html>
